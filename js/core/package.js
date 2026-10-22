@@ -5,12 +5,15 @@ import yaml from '../../vendor/js-yaml@4.1.1/js-yaml.mjs';
 import { zipSync, strToU8 } from '../../vendor/fflate@0.8.2/fflate.js';
 import { projectToYaml } from './yaml-io.js';
 import { projectFileNameFor } from './validate.js';
+import { buildRoutingTable, tableToDelimited } from './table.js';
 import { relativePathError, segmentError, targetPath, dirname, relativeInclude } from './paths.js';
 import { slugify, sha256Hex, t } from './util.js';
 import { APP_NAME, APP_VERSION } from './version.js';
 import { SCHEMA_VERSION } from './schema.js';
 
 export { projectFileNameFor };
+
+export const TABLE_FILE = 'routing-table.csv';
 
 export function zipFileNameFor(project) {
   return t(project.settings.package.zipFileName) || `${slugify(project.project.name)}.zip`;
@@ -35,18 +38,20 @@ export async function buildPackage(project, build, { now = new Date() } = {}) {
   const entries = configFiles.map((f) => ({ path: f.path, content: f.content, kind: f.kind, file: f }));
 
   const yamlText = s.package.includeProjectFile ? projectToYaml(project) : null;
-  const manifest = await buildManifest(project, build, entries, { now, projectFile, yamlText });
+  const tableText = s.package.includeTable ? tableToDelimited(buildRoutingTable(project, build), { bom: true }) : null;
+  const manifest = await buildManifest(project, build, entries, { now, projectFile, yamlText, tableText });
   const manifestText = `# Package manifest written by ${APP_NAME}. Lists every file with its size and SHA-256.\n${yaml.dump(manifest, { noRefs: true, lineWidth: 120 })}`;
-  const readme = buildReadme(project, build, entries, { now, projectFile: yamlText ? projectFile : null });
+  const readme = buildReadme(project, build, entries, { now, projectFile: yamlText ? projectFile : null, tableFile: tableText ? TABLE_FILE : null });
 
   entries.push({ path: 'manifest.yml', content: manifestText, kind: 'manifest' });
   entries.push({ path: 'README.md', content: readme, kind: 'readme' });
   if (yamlText) entries.push({ path: projectFile, content: yamlText, kind: 'project' });
+  if (tableText) entries.push({ path: TABLE_FILE, content: tableText, kind: 'table' });
 
   return { rootFolder: t(s.package.rootFolder), zipName: zipFileNameFor(project), entries, manifest };
 }
 
-async function buildManifest(project, build, entries, { now, projectFile, yamlText }) {
+async function buildManifest(project, build, entries, { now, projectFile, yamlText, tableText }) {
   const s = project.settings;
   const files = [];
   for (const e of entries) {
@@ -64,6 +69,9 @@ async function buildManifest(project, build, entries, { now, projectFile, yamlTe
   }
   if (yamlText) {
     files.push({ path: projectFile, type: 'project file', source: 'this project (import it in the app)', bytes: new TextEncoder().encode(yamlText).length, sha256: await sha256Hex(yamlText) });
+  }
+  if (tableText) {
+    files.push({ path: TABLE_FILE, type: 'endpoint routing table (CSV)', bytes: new TextEncoder().encode(tableText).length, sha256: await sha256Hex(tableText) });
   }
   files.push({ path: 'README.md', type: 'instructions' });
   files.sort((a, b) => a.path.localeCompare(b.path));
@@ -118,7 +126,7 @@ function summaryOf(project, f) {
 const code = (s) => `\`${s}\``;
 const fence = (lines) => ['```bash', ...lines, '```'].join('\n');
 
-function buildReadme(project, build, entries, { now, projectFile }) {
+function buildReadme(project, build, entries, { now, projectFile, tableFile }) {
   const s = project.settings;
   const root = t(s.nginxRoot) || '/etc/nginx';
   const pkgRoot = t(s.package.rootFolder);
@@ -154,6 +162,7 @@ function buildReadme(project, build, entries, { now, projectFile }) {
   p('| `manifest.yml` | file list with sizes and SHA-256 checksums | – |');
   p('| `README.md` | these instructions | – |');
   if (projectFile) p(`| ${code(projectFile)} | project file; import it in ${APP_NAME} to edit this configuration | – |`);
+  if (tableFile) p(`| ${code(tableFile)} | every endpoint with its upstream, backend hosts and ports, file and status (opens in Excel) | – |`);
   p();
 
   p('## Before you install');
@@ -205,7 +214,7 @@ function buildReadme(project, build, entries, { now, projectFile }) {
   p();
   p(fence([`sudo tar -czf /root/nginx-backup-$(date +%Y%m%d-%H%M%S).tar.gz -C ${dirname(root) || '/'} ${root.split('/').pop()}`]));
   p();
-  p(`3. Copy the configuration files into ${code(root)} (only the files listed here; README, manifest and project file stay in the staging folder):`);
+  p(`3. Copy the configuration files into ${code(root)} (only the files listed here; README, manifest, project file and routing table stay in the staging folder):`);
   p();
   const lines = [`cd ${staging}${pkgRoot ? `/${pkgRoot}` : ''}`];
   for (const e of cfgEntries) lines.push(`sudo install -D -m 644 ${e.path} ${targetPath(root, e.path)}`);

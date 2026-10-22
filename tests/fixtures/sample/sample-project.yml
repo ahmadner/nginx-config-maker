@@ -61,6 +61,11 @@ settings:
     rootFolder: nginx-config
     includeDisabled: true
     includeProjectFile: true
+    includeTable: true
+  table:
+    layout: auto
+    groupRows: true
+    includeDisabled: true
 rateLimitZones:
   - name: partner_api
     key: $binary_remote_addr

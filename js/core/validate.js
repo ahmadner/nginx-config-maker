@@ -743,6 +743,7 @@ class Validator {
     const s = this.s;
     const map = new Map([['manifest.yml', 'manifest'], ['readme.md', 'README']]);
     if (s.package.includeProjectFile) map.set(projectFileNameFor(this.p).toLowerCase(), 'project file');
+    if (s.package.includeTable) map.set('routing-table.csv', 'routing table');
     return map;
   }
 

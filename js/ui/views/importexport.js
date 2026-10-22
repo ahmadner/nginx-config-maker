@@ -1,4 +1,5 @@
-// Import / Export tab: project YAML export, YAML import with a review step, and the ZIP package.
+// Import / Export tab: project YAML export, the endpoint routing table, YAML import with a review
+// step, and the ZIP package.
 
 import { h, icon, button, replace, fmtBytes } from '../dom.js';
 import { textField, checkField, grid, note, staticField } from '../fields.js';
@@ -9,6 +10,7 @@ import { projectFileNameFor, zipFileNameFor } from '../../core/package.js';
 import { compareProjects } from '../../core/diff.js';
 import { buildAll } from '../../core/build.js';
 import { t } from '../../core/util.js';
+import { routingTableCard } from './routing-table.js';
 
 const state = { pending: null, pickNext: false };
 
@@ -77,6 +79,7 @@ export const importExportView = {
     this.yamlView = new CodeView({ label: 'Project YAML' });
     this.pkgList = h('div', { class: 'pkg-list' });
     this.review = h('div', { class: 'review', 'aria-live': 'polite' });
+    this.table = routingTableCard(app);
     this.picker = hiddenPicker(async (file) => {
       state.pending = await readAndParse(file);
       this.renderReview(app);
@@ -117,6 +120,8 @@ export const importExportView = {
             button('Copy YAML', async () => { const ok = await copyText(projectToYaml(app.project)); toast(ok ? 'Copied the project YAML.' : 'Copy failed.', ok ? 'success' : 'error'); }, { icon: 'copy' }))),
         h('details', { class: 'section' }, h('summary', { class: 'section-summary' }, h('h3', { class: 'section-title', text: 'Show the YAML' })), h('div', { class: 'section-body' }, this.yamlView.el))),
 
+      this.table.el,
+
       h('section', { class: 'card' },
         h('h2', { class: 'card-title', text: 'Import project (YAML)' }),
         h('p', { text: 'The file is checked first, and you can review the differences before anything changes. Imported content is treated as data only.' }),
@@ -145,6 +150,7 @@ export const importExportView = {
   refresh(app) {
     if (!this.yamlView || !this.pkgList?.isConnected) return;
     this.yamlView.update(projectToYaml(app.project), [], { language: 'yaml' });
+    this.table.refresh();
     this.packageReady(app);
   },
 

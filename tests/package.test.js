@@ -23,7 +23,7 @@ test('ZIP keeps the directory structure and holds only package files', async () 
   const names = Object.keys(entries).sort();
   const expected = [
     ...build.files.map((f) => `nginx-config/${f.path}`),
-    'nginx-config/manifest.yml', 'nginx-config/README.md', 'nginx-config/sample-environment-placeholders.yml',
+    'nginx-config/manifest.yml', 'nginx-config/README.md', 'nginx-config/sample-environment-placeholders.yml', 'nginx-config/routing-table.csv',
   ].sort();
   assert.deepEqual(names, expected);
   assert.ok(names.includes('nginx-config/upstreams/external/v1/visitor.conf'));
@@ -36,6 +36,11 @@ test('ZIP keeps the directory structure and holds only package files', async () 
     assert.ok(!/BEGIN [A-Z ]*PRIVATE KEY/.test(strFromU8(data)), n);
     assert.ok(!/\.(js|mjs|html|css|pem|key|p12)$/.test(n), n);
   }
+  const csvBytes = entries['nginx-config/routing-table.csv'];
+  assert.deepEqual([...csvBytes.slice(0, 3)], [0xef, 0xbb, 0xbf], 'UTF-8 byte order mark so Excel reads the encoding');
+  const csv = strFromU8(csvBytes); // TextDecoder drops the BOM
+  assert.ok(csv.startsWith('Endpoint,Match,Type,'));
+  assert.equal(csv.trimEnd().split('\r\n').length, 13, 'header + one row per endpoint');
 });
 
 test('manifest lists every file with matching checksums', async () => {
@@ -81,13 +86,14 @@ test('package options: root folder, file names, disabled files, project file', a
   p.upstreams.push(upstream({ name: 'parked', outputDir: 'upstreams/external', fileName: 'parked.conf', enabled: false, servers: [{ address: '10.0.0.9', port: 80 }] }));
   assert.equal(zipFileNameFor(p), 'production-servers.zip');
   assert.equal(projectFileNameFor(p), 'production-servers.yml');
-  p.settings.package = { rootFolder: '', includeDisabled: false, includeProjectFile: false, projectFileName: '', zipFileName: 'prod.zip' };
+  p.settings.package = { rootFolder: '', includeDisabled: false, includeProjectFile: false, includeTable: false, projectFileName: '', zipFileName: 'prod.zip' };
   const { entries, pkg } = await packageOf(p);
   assert.equal(pkg.zipName, 'prod.zip');
   const names = Object.keys(entries);
   assert.ok(names.includes('conf.d/external.conf'));
   assert.ok(!names.some((n) => n.includes('disabled')));
   assert.ok(!names.some((n) => n.endsWith('.yml') && n !== 'manifest.yml'));
+  assert.ok(!names.includes('routing-table.csv'));
 });
 
 test('the ZIP writer refuses unsafe or duplicate paths', () => {

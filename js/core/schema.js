@@ -233,8 +233,16 @@ S.settings = obj({
     rootFolder: str('nginx-config'),
     includeDisabled: bool(true),
     includeProjectFile: bool(true),
+    includeTable: bool(true),
     projectFileName: str(),
     zipFileName: str(),
+  }),
+  // Endpoint routing table (image, CSV, and routing-table.csv in the package).
+  table: obj({
+    layout: oneOf(['auto', 'matrix', 'list']),
+    groupRows: bool(true),
+    proxyOnly: bool(false),
+    includeDisabled: bool(true),
   }),
 });
 

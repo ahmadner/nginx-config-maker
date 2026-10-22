@@ -535,6 +535,35 @@ select.input { padding-right: 28px; }
 .files-issues { padding: 10px 18px; border-bottom: 1px solid var(--border); max-height: 34%; overflow: auto; background: var(--panel-2); }
 .files-viewer .code-view { flex: 1; }
 
+/* ---------- Endpoint routing table preview (mirrors the PNG) ---------- */
+.card-title-action { margin-left: auto; font-weight: 500; }
+.rt-summary { margin: 12px 0 8px; }
+.rt-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+.rt { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 13px; }
+.rt th { background: #1f2a37; color: #fff; font-size: 12px; font-weight: 600; text-align: left; padding: 7px 10px; white-space: nowrap; border-right: 1px solid rgba(255, 255, 255, 0.08); }
+.rt th.rt-super { background: #2e3d4f; text-align: center; text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
+.rt th.rt-host-head { text-align: center; }
+.rt td { padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; max-width: 340px; }
+.rt td.mono { font-size: 12.5px; }
+.rt-zebra td { background: var(--panel-2); }
+.rt-group td { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 8px 12px; }
+.rt-group-sub { margin-left: 14px; color: var(--text-3); font-size: 12px; }
+.rt-endpoint { font-weight: 600; white-space: nowrap; }
+.rt-soft { color: var(--text-3); }
+.rt-host { text-align: center; white-space: nowrap; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
+.rt-active { color: var(--link); font-weight: 600; }
+.rt-backup { color: var(--warning); }
+.rt-down { color: var(--error); }
+.rt-off { color: var(--text-3); text-decoration: line-through; font-weight: 400; }
+.rt-muted td { color: var(--text-3); }
+.rt-pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.rt-ok { background: var(--ok-bg); color: var(--ok); }
+.rt-warning { background: var(--warning-bg); color: var(--warning); }
+.rt-error { background: var(--error-bg); color: var(--error); }
+.rt-muted .rt-pill, .rt-pill.rt-muted { background: var(--panel-3); color: var(--text-3); }
+.rt-legend { margin: 10px 0 0; padding-left: 18px; color: var(--text-3); font-size: 12.5px; }
+.rt-legend:empty { display: none; }
+
 /* ---------- Import / export ---------- */
 .drop {
   display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 24px; margin: 8px 0 12px; border: 2px dashed var(--border-strong);

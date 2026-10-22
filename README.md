@@ -7,6 +7,7 @@ Everything runs in the browser. There is no backend, no database, no build step 
 - [What it generates](#what-it-generates)
 - [Run it locally](#run-it-locally)
 - [Using the app](#using-the-app)
+- [Endpoint routing table (image and CSV)](#endpoint-routing-table-image-and-csv)
 - [Validation](#validation)
 - [Deploying a package to a server](#deploying-a-package-to-a-server)
 - [YAML project files](#yaml-project-files)
@@ -41,6 +42,7 @@ nginx-config/                     (folder inside the ZIP, configurable)
 ├── security_headers.conf         shared add_header … always (+ proxy_hide_header)
 ├── manifest.yml                  every file with size, SHA-256, what loads it
 ├── README.md                     installation, nginx -t and rollback steps for this package
+├── routing-table.csv             every endpoint with upstream, backend hosts and ports, file, status
 └── <project>.yml                 the project, importable again
 ```
 
@@ -90,7 +92,7 @@ The layout:
 
 - **Toolbar**: project name, validation status (click it for details), Import YAML, Export YAML, Download ZIP, and the preview toggle.
 - **Left sidebar**: projects and the tree of generated files. The menu button hides it.
-- **Tabs**: *Overview* (project details, summary table, every issue), *Servers*, *Upstreams*, *Generated files* (the exact package content), *Import / Export* and *Settings*.
+- **Tabs**: *Overview* (project details, summary table, every issue), *Servers*, *Upstreams*, *Generated files* (the exact package content), *Import / Export* (project YAML, endpoint routing table, ZIP) and *Settings*.
 - **Right panel**: a live preview of the file you are editing. Focusing a field highlights the lines it produces. Drag the panel's edge to resize it.
 
 Typical workflow:
@@ -114,6 +116,41 @@ Features that need something outside the package are marked in the UI and listed
 | Ports below 1024 | Root, or `CAP_NET_BIND_SERVICE` on the nginx binary |
 | Custom directives using Lua, njs, headers-more | Those modules (they are flagged) |
 | Active health checks, `sticky`, `least_time` | NGINX Plus (not supported by open-source Nginx) |
+
+## Endpoint routing table (image and CSV)
+
+*Import / Export → Endpoint routing table* turns the project into one table of every endpoint. It shows the upstream group, the port on each backend host, the configuration file and the status. It is meant for handover documents, change tickets and spreadsheets. The preview on screen shows exactly what the image contains.
+
+```text
+ Endpoint             Upstream / handled by   Balancing  │ 192.0.2.11  192.0.2.12  192.0.2.13  192.0.2.14 │ Notes      Status
+ External  conf.d/external.conf · listen 8444 · any host name · External
+ /catalog/            ext_catalog                        │ 9000        9000                               │            Active
+ /billing/            ext_billing                        │ 9000 off    9000                               │            Active
+ /billingKycShop/     ext_billingKycShop                 │                         9000        9000       │            Active
+ Internal  conf.d/internal.conf · listen 8443 · any host name · Internal
+ /billingJob/         int_billingJob                     │ 9005        9005 backup                        │ read 600s  Active
+ = /healthz           health check (200 "ok")            │                                                │            Active
+```
+
+How it is laid out:
+
+- **One column per backend host**, with the port in each cell, so you can see at a glance which nodes serve which application. Markers show `backup`, `down`, `off` (kept in the file as a comment, out of rotation) and weights (`w2`). A legend under the table explains only the markers that appear. Above 8 hosts, *Automatic* switches to one *Backend servers* column (`host:port, …`) so the table stays readable. Either layout can also be chosen explicitly.
+- **Rows are grouped by server block.** A band shows the file, the listen port, the server names and the category, so those values are not repeated on every row. Turn grouping off to get them as columns instead.
+- **Columns that would be empty are left out.** These are *Balancing* (round robin is the default), *Backend path* and *Notes*.
+- **Notes** list per-endpoint overrides: timeouts, body size, WebSocket, allowed methods, IP allowlists, passwords, rate limits, internal-only and HTTPS backends.
+- **Status** comes from validation: *Active*, *Review* (warnings), *Error*, *Missing upstream*, *Upstream off*, *No backend* or *Disabled*. Upstream groups that no endpoint uses are listed under the table.
+- Redirects, static files, health checks and the status page appear with what handles them. Choose *Proxy endpoints only* to leave them out.
+
+Exports:
+
+| Action | Result |
+|--------|--------|
+| Download PNG | `<project>-routing-table.png`, drawn at 2× for sharp text, light document colours whatever the app theme |
+| Copy image | the same PNG on the clipboard, ready to paste into a document, ticket or e-mail |
+| Download CSV | `<project>-routing-table.csv`: one row per endpoint with every column (match type, environment, server configuration, listen, server names, upstream file, …), UTF-8 with BOM so Excel shows it correctly |
+| Copy for Excel | the same rows as tab-separated text, to paste into a spreadsheet |
+
+The CSV is also added to the ZIP package as `routing-table.csv` (*Add routing-table.csv to the ZIP package*). Cells that start with `=`, `+`, `-` or `@` are prefixed with `'`, so spreadsheets never run them as formulas.
 
 ## Validation
 
@@ -169,7 +206,8 @@ settings:
   sslParams:       { path: ssl_params.conf, protocols: [TLSv1.2, TLSv1.3], ciphers: '…', sessionCache: shared:SSL:20m, sessionTimeout: 10m, sessionTickets: 'off' }
   securityHeaders: { path: security_headers.conf, hideUpstreamHeaders: true, frameOptions: SAMEORIGIN, contentTypeOptions: true, hsts: true, hstsMaxAge: 31536000 }
   format:  { indent: 4, alignValues: true, headerComments: true }
-  package: { rootFolder: nginx-config, includeDisabled: true, includeProjectFile: true }
+  package: { rootFolder: nginx-config, includeDisabled: true, includeProjectFile: true, includeTable: true }
+  table:   { layout: auto, groupRows: true, proxyOnly: false, includeDisabled: true }   # routing table: auto | matrix | list
 rateLimitZones:
   - { name: api, key: $binary_remote_addr, size: 10m, rate: 10r/s }
 upstreams:
@@ -242,12 +280,12 @@ No secrets or configuration are needed. The page sets a strict Content Security 
 ## Development and tests
 
 ```bash
-npm test               # 80 tests, no npm install needed (the vendored libraries are used directly)
+npm test               # 87 tests, no npm install needed (the vendored libraries are used directly)
 npm run fixtures       # regenerate tests/fixtures/sample after an intended output change
 npm run vendor:check   # verify the vendored libraries against vendor/checksums.json
 ```
 
-The tests cover generation (upstreams, every load-balancing method, servers, TLS, HTTP/2 syntaxes, redirects, locations of every type, proxy settings and header inheritance, custom directives, multiple blocks, nested paths, disabled files), validation (every error class above), YAML round-trips and malformed or hostile input, ZIP structure and manifest checksums, project storage, golden files for the sample project, and static-hosting compatibility (relative imports, CSP, no network or dynamic code, subpath serving).
+The tests cover generation (upstreams, every load-balancing method, servers, TLS, HTTP/2 syntaxes, redirects, locations of every type, proxy settings and header inheritance, custom directives, multiple blocks, nested paths, disabled files), validation (every error class above), YAML round-trips and malformed or hostile input, ZIP structure and manifest checksums, the routing table (layouts, markers, status, CSV quoting and formula protection), project storage, golden files for the sample project, and static-hosting compatibility (relative imports, CSP, no network or dynamic code, subpath serving).
 
 Project structure:
 
@@ -263,8 +301,9 @@ js/core/                    no DOM access; runs in Node for tests
   analyze.js, directives.js block-level checks against a catalog of Nginx directives
   validate.js, build.js     validation rules; generation + validation + issue-to-line mapping
   yaml-io.js, package.js    YAML import/export; manifest, README, ZIP
+  table.js                  endpoint routing table model, CSV/TSV
   diff.js, sample.js, net.js, paths.js, formats.js, util.js, version.js
-js/ui/                      DOM: app controller, form fields, dialogs, code view, tree, store
+js/ui/                      DOM: app controller, form fields, dialogs, code view, tree, store, table image (canvas)
 js/ui/views/                toolbar, sidebar, preview and the six tabs
 vendor/                     js-yaml 4.1.1 and fflate 0.8.2 (pinned, with licenses and checksums)
 tests/                      node:test suites and golden files
