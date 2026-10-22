@@ -20,7 +20,7 @@ export function sidebar(app) {
     { label: 'Import YAML file…', icon: 'upload', onSelect: () => importExportView.pickAsNew(app) },
   ]), { icon: 'plus', iconOnly: true, attrs: { 'aria-haspopup': 'menu', 'aria-expanded': 'false' } });
 
-  const el = h('aside', { class: 'sidebar', 'aria-label': 'Projects and files' },
+  const el = h('aside', { class: 'sidebar', id: 'sidebar', 'aria-label': 'Projects and files' },
     h('div', { class: 'side-section' },
       h('div', { class: 'side-head' }, h('h2', { text: 'Projects' }), newBtn),
       projectList),

@@ -1,6 +1,6 @@
 // Top toolbar: project name, validation status, import/export and the ZIP download.
 
-import { h, icon, button } from '../dom.js';
+import { h, icon, button, replace } from '../dom.js';
 import { importExportView } from './importexport.js';
 
 export function toolbar(app) {
@@ -28,12 +28,41 @@ export function toolbar(app) {
     app.setPref('previewOpen', !open);
     previewBtn.setAttribute('aria-pressed', String(!open));
   }, { icon: 'panel', iconOnly: true, title: 'Show or hide the preview panel', attrs: { 'aria-pressed': String(app.prefs.previewOpen) } });
-  const menuBtn = button('Show or hide projects and files', () => {
-    if (window.matchMedia('(max-width: 860px)').matches) { app.root.classList.toggle('sidebar-open'); return; }
-    const collapsed = !app.root.classList.contains('sidebar-collapsed');
-    app.root.classList.toggle('sidebar-collapsed', collapsed);
-    app.setPref('sidebarCollapsed', collapsed);
-  }, { icon: 'menu', iconOnly: true });
+  // Wide screens: the sidebar is a column that can be hidden (remembered). Narrow screens: it slides over
+  // the workspace and closes again on a click outside it or Escape.
+  const narrow = window.matchMedia('(max-width: 860px)');
+  const sidebarVisible = () => (narrow.matches ? app.root.classList.contains('sidebar-open') : !app.root.classList.contains('sidebar-collapsed'));
+  const menuBtn = button('Hide projects and files', () => {
+    if (narrow.matches) {
+      app.root.classList.toggle('sidebar-open');
+    } else {
+      const collapsed = !app.root.classList.contains('sidebar-collapsed');
+      app.root.classList.toggle('sidebar-collapsed', collapsed);
+      app.setPref('sidebarCollapsed', collapsed);
+    }
+    syncMenu();
+  }, { icon: 'menu', iconOnly: true, attrs: { 'aria-controls': 'sidebar' } });
+  function syncMenu() {
+    const visible = sidebarVisible();
+    const label = visible ? 'Hide projects and files' : 'Show projects and files';
+    menuBtn.setAttribute('aria-expanded', String(visible));
+    menuBtn.setAttribute('aria-label', label);
+    menuBtn.title = label;
+  }
+  narrow.addEventListener('change', () => { app.root.classList.remove('sidebar-open'); syncMenu(); });
+  document.addEventListener('pointerdown', (e) => {
+    if (!narrow.matches || !app.root.classList.contains('sidebar-open')) return;
+    if (menuBtn.contains(e.target) || document.getElementById('sidebar')?.contains(e.target)) return;
+    app.root.classList.remove('sidebar-open');
+    syncMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && narrow.matches && app.root.classList.contains('sidebar-open')) {
+      app.root.classList.remove('sidebar-open');
+      syncMenu();
+      menuBtn.focus();
+    }
+  });
 
   const el = h('header', { class: 'toolbar' },
     menuBtn,
@@ -44,6 +73,7 @@ export function toolbar(app) {
     h('div', { class: 'toolbar-actions' }, importBtn, exportBtn, zipBtn, previewBtn));
 
   function refresh() {
+    syncMenu();
     const p = app.project;
     const has = !!p;
     for (const b of [exportBtn, zipBtn]) b.disabled = !has;
@@ -55,7 +85,8 @@ export function toolbar(app) {
     env.textContent = p.project.environment.trim();
     const c = app.build ? app.build.counts : { error: 0, warning: 0, info: 0 };
     status.className = `status-pill ${c.error ? 'status-error' : c.warning ? 'status-warning' : 'status-ok'}`;
-    status.replaceChildren(
+    // replace() skips null; the DOM's replaceChildren() would print it as the text "null".
+    replace(status,
       icon(c.error ? 'error' : c.warning ? 'alert' : 'check'),
       h('span', { text: c.error ? `${c.error} error${c.error === 1 ? '' : 's'}` : c.warning ? 'No errors' : 'No problems found' }),
       c.warning ? h('span', { class: 'status-sub', text: `${c.warning} warning${c.warning === 1 ? '' : 's'}` }) : null);

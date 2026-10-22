@@ -169,6 +169,10 @@ a { color: var(--link); }
 .app.preview-closed .body,
 .app.no-project .body,
 .app[data-tab="files"] .body { grid-template-columns: var(--sidebar-w) minmax(0, 1fr); }
+/* Fixed columns: a hidden sidebar or preview must not shift the workspace into another column. */
+.body > .sidebar { grid-column: 1; }
+.body > .workspace { grid-column: 2; }
+.body > .preview { grid-column: 3; }
 .app.sidebar-collapsed { --sidebar-w: 0px; }
 .app.sidebar-collapsed .sidebar { display: none; }
 .app.preview-closed .preview,
@@ -660,6 +664,7 @@ select.input { padding-right: 28px; }
 
 @media (max-width: 860px) {
   .body, .app.preview-closed .body, .app[data-tab="files"] .body { grid-template-columns: minmax(0, 1fr); }
+  .body > .workspace { grid-column: 1; }
   .sidebar {
     position: fixed; top: var(--toolbar-h); left: 0; bottom: 0; width: 290px; z-index: 60; transform: translateX(-102%);
     transition: transform 0.18s ease-out; box-shadow: var(--shadow);
