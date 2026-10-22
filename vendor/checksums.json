@@ -1,0 +1,17 @@
+{
+  "note": "Written by scripts/vendor.mjs --copy. Checked by npm test.",
+  "files": {
+    "js-yaml@4.1.1/js-yaml.mjs": {
+      "package": "js-yaml",
+      "version": "4.1.1",
+      "source": "js-yaml/dist/js-yaml.mjs",
+      "sha256": "efbc45850bf15f0c8ee3434983f512be656002d7507dc292c7ade4449b5d57fa"
+    },
+    "fflate@0.8.2/fflate.js": {
+      "package": "fflate",
+      "version": "0.8.2",
+      "source": "fflate/esm/browser.js",
+      "sha256": "8cc1f687e0159e977addb6b85e274dbd11e622cf151f4fcb7b85d49622ea43e7"
+    }
+  }
+}

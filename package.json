@@ -1,0 +1,21 @@
+{
+  "name": "nginx-config-generator",
+  "version": "1.0.0",
+  "description": "Static, client-side generator for Nginx conf.d and upstream configuration packages.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "test": "node --test \"tests/*.test.js\"",
+    "fixtures": "node scripts/update-fixtures.mjs",
+    "vendor:check": "node scripts/vendor.mjs --check",
+    "vendor:update": "node scripts/vendor.mjs --copy"
+  },
+  "devDependencies": {
+    "fflate": "0.8.2",
+    "js-yaml": "4.1.1"
+  }
+}

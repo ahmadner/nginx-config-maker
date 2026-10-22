@@ -1,0 +1,399 @@
+# Nginx Config Generator project file (schema version 1).
+# Import it in the app to restore every server, upstream group and setting.
+schemaVersion: 1
+project:
+  name: Sample environment (placeholders)
+  description: >-
+    Example layout with placeholder IPs (192.0.2.x, 198.51.100.x, 203.0.113.x), example.com names and certificate paths.
+    Replace every placeholder before deploying.
+  environment: production
+settings:
+  nginxRoot: /etc/nginx
+  httpIncludes:
+    - upstreams.conf
+    - conf.d/*.conf
+  nginxVersion: 1.24-or-older
+  serverDir: conf.d
+  upstreamDir: upstreams
+  disabledDirName: disabled
+  upstreamIndex:
+    enabled: true
+    path: upstreams.conf
+    style: directories
+  sharedHttpPath: conf.d/00-shared.conf
+  logRoot: /var/log/nginx
+  logFormat: main
+  proxyParams:
+    path: proxy_params.conf
+    httpVersion: '1.1'
+    clearConnectionHeader: true
+    hostHeader: $host
+    realIp: true
+    forwardedFor: true
+    forwardedProto: true
+    redirect: 'off'
+  sslParams:
+    path: ssl_params.conf
+    protocols:
+      - TLSv1.2
+      - TLSv1.3
+    ciphers: >-
+      ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305
+    preferServerCiphers: 'on'
+    sessionCache: shared:SSL:20m
+    sessionTimeout: 10m
+    sessionTickets: 'off'
+  securityHeaders:
+    path: security_headers.conf
+    hideUpstreamHeaders: true
+    frameOptions: SAMEORIGIN
+    contentTypeOptions: true
+    referrerPolicy: strict-origin-when-cross-origin
+    hsts: true
+    hstsMaxAge: 31536000
+    hstsIncludeSubDomains: true
+    permissionsPolicy: geolocation=(), microphone=(), camera=()
+  format:
+    indent: 4
+    alignValues: true
+    headerComments: true
+  package:
+    rootFolder: nginx-config
+    includeDisabled: true
+    includeProjectFile: true
+rateLimitZones:
+  - name: partner_api
+    key: $binary_remote_addr
+    size: 10m
+    rate: 20r/s
+upstreams:
+  - name: ext_portal
+    description: Customer portal (pair A)
+    environment: production
+    category: external
+    enabled: true
+    outputDir: upstreams/external
+    fileName: portal.conf
+    method: round_robin
+    keepalive: 32
+    servers:
+      - address: 192.0.2.11
+        port: 9000
+        enabled: true
+      - address: 192.0.2.12
+        port: 9000
+        enabled: true
+  - name: ext_payments
+    description: Payment API with a standby node
+    environment: production
+    category: external
+    enabled: true
+    outputDir: upstreams/external
+    fileName: payments.conf
+    method: least_conn
+    keepalive: 32
+    servers:
+      - address: 192.0.2.21
+        port: 9002
+        weight: 2
+        maxFails: 3
+        failTimeout: 30s
+        enabled: true
+      - address: 192.0.2.22
+        port: 9002
+        maxFails: 3
+        failTimeout: 30s
+        enabled: true
+      - address: 192.0.2.23
+        port: 9002
+        backup: true
+        enabled: true
+        comment: standby
+  - name: ext_visitor
+    description: Visitor portal, sticky by client IP
+    environment: production
+    category: external
+    enabled: true
+    outputDir: upstreams/external/v1
+    fileName: visitor.conf
+    method: ip_hash
+    keepalive: 32
+    servers:
+      - address: 192.0.2.31
+        port: 8444
+        maxFails: 2
+        failTimeout: 30s
+        enabled: true
+      - address: 192.0.2.32
+        port: 8444
+        maxFails: 2
+        failTimeout: 30s
+        enabled: false
+        comment: out of rotation for maintenance
+  - name: int_reports
+    description: Reporting (long-running requests)
+    environment: production
+    category: internal
+    enabled: true
+    outputDir: upstreams/internal
+    fileName: reports.conf
+    method: round_robin
+    keepalive: 16
+    keepaliveTimeout: 60s
+    servers:
+      - address: 198.51.100.41
+        port: 9005
+        enabled: true
+      - address: 198.51.100.42
+        port: 9005
+        enabled: true
+  - name: int_search
+    description: Search, cache-friendly hashing by URI
+    environment: production
+    category: internal
+    enabled: true
+    outputDir: upstreams/internal
+    fileName: search.conf
+    method: hash
+    hashKey: $request_uri
+    hashConsistent: true
+    keepalive: 32
+    servers:
+      - address: 198.51.100.51
+        port: 9200
+        enabled: true
+      - address: 198.51.100.52
+        port: 9200
+        enabled: true
+servers:
+  - name: External gateway
+    description: Public application traffic
+    environment: production
+    category: external
+    enabled: true
+    outputDir: conf.d
+    fileName: external.conf
+    blocks:
+      - label: Catch-all for external applications
+        listen:
+          - port: 8444
+            defaultServer: true
+        serverNames:
+          - _
+        clientMaxBodySize: 100M
+        logging:
+          perLocation: true
+        locations:
+          - group: Pair A (192.0.2.11 / .12)
+            match: prefix
+            path: /portal/
+            type: proxy
+            proxyPass:
+              target: upstream
+              upstream: ext_portal
+              scheme: http
+            proxy:
+              includeParams: true
+          - name: portal-ws
+            group: Pair A (192.0.2.11 / .12)
+            match: prefix
+            path: /portal/ws/
+            type: proxy
+            proxyPass:
+              target: upstream
+              upstream: ext_portal
+              scheme: http
+            proxy:
+              hostHeader: $host
+              forwardedFor: true
+              readTimeout: 1h
+              websocket: true
+          - group: Payments (192.0.2.21 - .23)
+            match: prefix
+            path: /payments/
+            type: proxy
+            proxyPass:
+              target: upstream
+              upstream: ext_payments
+              scheme: http
+            proxy:
+              includeParams: true
+              readTimeout: 120s
+          - match: exact
+            path: /healthz
+            type: health
+            health:
+              text: ok
+      - label: 'Partner API: listed partner networks only'
+        listen:
+          - port: 8445
+        serverNames:
+          - api.example.com
+        logging:
+          perLocation: true
+        responseHeaders:
+          - name: X-Environment
+            value: sample
+            always: true
+        access:
+          rules:
+            - action: allow
+              source: 203.0.113.0/24
+            - action: deny
+              source: all
+        rateLimit:
+          zone: partner_api
+          burst: 40
+          nodelay: true
+          status: 429
+        locations:
+          - name: partner-v1
+            match: prefix
+            path: /v1/
+            type: proxy
+            proxyPass:
+              target: upstream
+              upstream: ext_payments
+              scheme: http
+              uri: /api/v1/
+            methods:
+              - GET
+              - POST
+            proxy:
+              includeParams: true
+  - name: Internal services
+    description: Back-office traffic from the internal network
+    environment: production
+    category: internal
+    enabled: true
+    outputDir: conf.d
+    fileName: internal.conf
+    blocks:
+      - listen:
+          - port: 8443
+            defaultServer: true
+        serverNames:
+          - _
+        logging:
+          perLocation: true
+        locations:
+          - match: prefix
+            path: /reports/
+            type: proxy
+            proxyPass:
+              target: upstream
+              upstream: int_reports
+              scheme: http
+            proxy:
+              includeParams: true
+              readTimeout: 600s
+          - match: prefix
+            path: /search/
+            type: proxy
+            proxyPass:
+              target: upstream
+              upstream: int_search
+              scheme: http
+            proxy:
+              includeParams: true
+          - match: exact
+            path: /nginx_status
+            type: status
+            access:
+              rules:
+                - action: allow
+                  source: 127.0.0.1
+                - action: allow
+                  source: 198.51.100.0/24
+                - action: deny
+                  source: all
+  - name: Visitor portal (HTTPS)
+    description: TLS terminated on Nginx
+    environment: production
+    category: visitor
+    enabled: true
+    outputDir: conf.d
+    fileName: visitor.conf
+    blocks:
+      - listen:
+          - port: 443
+            ssl: true
+        serverNames:
+          - visitor.example.com
+        http2: true
+        tls:
+          certificate: /etc/nginx/ssl/visitor.example.com/fullchain.pem
+          certificateKey: /etc/nginx/ssl/visitor.example.com/privkey.pem
+          includeParams: true
+        redirectHttp:
+          enabled: true
+          port: 80
+          code: 301
+        securityHeaders: true
+        logging:
+          accessLog: /var/log/nginx/visitor.access.log
+          errorLog: /var/log/nginx/visitor.error.log
+          errorLogLevel: warn
+        proxy:
+          httpVersion: '1.1'
+          clearConnectionHeader: true
+          hostHeader: $host
+          realIp: true
+          forwardedFor: true
+          forwardedProto: true
+          connectTimeout: 10s
+          sendTimeout: 60s
+          readTimeout: 120s
+          bufferSize: 16k
+          buffers: 8 32k
+          busyBuffersSize: 64k
+        errorPages:
+          - codes:
+              - 502
+              - 503
+              - 504
+            target: /50x.html
+        locations:
+          - match: exact
+            path: /
+            type: return
+            return:
+              code: 301
+              value: https://$host/visitor/
+          - match: prefix
+            path: /visitor/
+            type: proxy
+            proxyPass:
+              target: upstream
+              upstream: ext_visitor
+              scheme: http
+              uri: /visitor/
+          - match: exact
+            path: /50x.html
+            type: static
+            internal: true
+            static:
+              root: /usr/share/nginx/html
+  - name: Legacy application
+    description: 'Parked: turned off, written to conf.d/disabled/'
+    environment: production
+    category: legacy
+    enabled: false
+    outputDir: conf.d
+    fileName: legacy.conf
+    blocks:
+      - listen:
+          - port: 8080
+        serverNames:
+          - legacy.example.com
+        locations:
+          - match: prefix
+            path: /
+            type: proxy
+            proxyPass:
+              target: direct
+              scheme: http
+              address: 192.0.2.61
+              port: 8080
+            proxy:
+              includeParams: true

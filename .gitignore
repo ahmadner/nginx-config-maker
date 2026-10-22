@@ -1,0 +1,20 @@
+# Dependencies (only needed to refresh vendor/; the app and tests run without them)
+node_modules/
+
+# Logs and OS files
+npm-debug.log*
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Packages downloaded from the app while testing (they may contain real addresses)
+*.zip
+
+# GitHub Pages build output of the workflow
+_site/
