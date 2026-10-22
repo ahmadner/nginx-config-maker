@@ -1,0 +1,4 @@
+# Keep LF everywhere: vendored files are checked by SHA-256, golden files byte for byte,
+# and generated Nginx configuration targets Linux.
+* text=auto eol=lf
+*.zip binary
