@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRoutingTable, tableToDelimited, cellText, compareHosts, safeCell, MATRIX_MAX_HOSTS } from '../js/core/table.js';
+import { buildRoutingTable, tableToDelimited, cellText, cellLines, compareHosts, parseWorkerNames, portsInUse, safeCell, MATRIX_MAX_HOSTS } from '../js/core/table.js';
 import { sampleProject } from '../js/core/sample.js';
 import { baseProject, buildAll, upstream, server, proxy, location } from './helpers.js';
 
@@ -83,17 +83,18 @@ test('worker layout: one row per backend worker (host + port) with the endpoints
   assert.equal(table.rows.length, 6);
   assert.equal(table.endpointRows.length, 5);
 
-  // Workers are numbered per host in ascending port order, and one worker can serve several endpoints.
-  assert.deepEqual([w('10.0.0.11', 'worker1').port, w('10.0.0.11', 'worker2').port], ['9000', '9005']);
+  // Ports are numbered across the project, so the same port is the same worker on every host.
+  assert.deepEqual([w('10.0.0.11', 'worker1').port, w('10.0.0.11', 'worker3').port], ['9000', '9005']);
+  assert.equal(w('10.0.0.13', 'worker2').port, '9001');
   assert.deepEqual(w('10.0.0.11', 'worker1').endpoints, ['/billing/', '/invoices/']);
   assert.equal(w('10.0.0.11', 'worker1').count, '2');
   assert.deepEqual(w('10.0.0.11', 'worker1').upstreams, ['ext_billing']);
-  assert.equal(w('10.0.0.11', 'worker2').flags, 'w2');
-  assert.equal(w('10.0.0.12', 'worker2').status, 'Standby');
-  assert.equal(w('10.0.0.13', 'worker1').status, 'Commented out');
-  assert.equal(w('10.0.0.13', 'worker1').statusLevel, 'muted');
-  assert.equal(w('10.0.0.14', 'worker1').method, 'ip_hash');
+  assert.equal(w('10.0.0.11', 'worker3').flags, 'w2');
+  assert.equal(w('10.0.0.12', 'worker3').status, 'Standby');
+  assert.equal(w('10.0.0.13', 'worker2').status, 'Commented out');
+  assert.equal(w('10.0.0.14', 'worker2').method, 'ip_hash');
   assert.ok(table.legend.some((l) => l.startsWith('One row per backend worker')));
+  assert.ok(table.legend.some((l) => l.includes('numbered by port across the project, from worker1')));
   assert.ok(table.footnotes.some((f) => f.startsWith('1 endpoint without a backend server')), 'the health check has no worker');
 
   const labels = table.columns.map((c) => c.label);
@@ -102,15 +103,63 @@ test('worker layout: one row per backend worker (host + port) with the endpoints
   assert.equal(tableOf(p, { layout: 'worker', groupRows: false }).columns[0].label, 'Backend host', 'the host is a column when rows are not grouped');
 });
 
+test('worker names: by port, per host, from zero, or named in the settings', () => {
+  const p = pairsProject();
+  const names = (opts) => tableOf(p, { layout: 'worker', ...opts }).rows.map((r) => `${r.host}:${r.port}=${r.worker}`);
+
+  // 9000, 9001 and 9005 are in use, so by port they are worker1, worker2 and worker3 on every host.
+  assert.deepEqual(names(), ['10.0.0.11:9000=worker1', '10.0.0.11:9005=worker3', '10.0.0.12:9000=worker1', '10.0.0.12:9005=worker3', '10.0.0.13:9001=worker2', '10.0.0.14:9001=worker2']);
+  assert.deepEqual(names({ workerFromZero: true }), ['10.0.0.11:9000=worker0', '10.0.0.11:9005=worker2', '10.0.0.12:9000=worker0', '10.0.0.12:9005=worker2', '10.0.0.13:9001=worker1', '10.0.0.14:9001=worker1']);
+  // Per host, every host starts again at worker1.
+  assert.deepEqual(names({ workerNumbering: 'host' }), ['10.0.0.11:9000=worker1', '10.0.0.11:9005=worker2', '10.0.0.12:9000=worker1', '10.0.0.12:9005=worker2', '10.0.0.13:9001=worker1', '10.0.0.14:9001=worker1']);
+
+  // Names given for single ports win; the rest keep their number.
+  const named = tableOf(p, { layout: 'worker', workerNames: ['9000 = web', '9005: jobs', 'nonsense', '  '] });
+  assert.deepEqual(named.rows.map((r) => r.worker), ['web', 'jobs', 'web', 'jobs', 'worker2', 'worker2']);
+  assert.ok(named.legend.some((l) => l.includes('come from the port list in the table options (9000, 9005)')));
+  assert.ok(named.legend.some((l) => l.startsWith('The other workers are numbered')));
+  assert.deepEqual([...parseWorkerNames(['9000=a', '80 b', 'x=y', '9000 = c'])], [['9000', 'c'], ['80', 'b']]);
+  assert.deepEqual(portsInUse(named.endpointRows), ['9000', '9001', '9005']);
+});
+
+test('worker layout: a status per endpoint, with the colours explained', () => {
+  const p = pairsProject();
+  p.servers[1].blocks[0].locations[0].proxy.buffers = 'bad'; // /jobs/ fails validation
+  p.servers[0].blocks[0].locations.push(location(proxy('/invoices/', 'ext_billing')));
+  const table = tableOf(p, { layout: 'worker' });
+  const w = (host, worker) => table.rows.find((r) => r.host === host && r.worker === worker);
+
+  // The status column belongs to the applications on the worker, not to the worker itself.
+  assert.deepEqual(w('10.0.0.11', 'worker1').endpointStatuses, [{ text: 'Active', level: 'ok' }, { text: 'Active', level: 'ok' }]);
+  assert.deepEqual(w('10.0.0.11', 'worker3').endpointStatuses, [{ text: 'Error', level: 'error' }]);
+  const status = table.columns.find((c) => c.kind === 'statuses');
+  assert.deepEqual(cellLines(w('10.0.0.11', 'worker1'), status), [{ text: 'Active', level: 'ok' }, { text: 'Active', level: 'ok' }]);
+  assert.deepEqual(cellLines(w('10.0.0.11', 'worker1'), table.columns.find((c) => c.kind === 'list')), [{ text: '/billing/' }, { text: '/invoices/' }]);
+
+  // The commented-out server keeps its colours: the endpoint itself still runs on the other host.
+  assert.equal(w('10.0.0.13', 'worker2').status, 'Commented out');
+  assert.equal(w('10.0.0.13', 'worker2').dim, false);
+  assert.deepEqual(w('10.0.0.13', 'worker2').endpointStatuses, [{ text: 'Active', level: 'ok' }]);
+
+  assert.deepEqual(table.colorLegend.map((c) => [c.level, c.label]), [['ok', 'Active'], ['error', 'Error']]);
+  assert.ok(table.colorLegend.every((c) => c.meaning.includes(':')), 'each colour says what it means');
+
+  // Turned-off configurations are grey in every layout.
+  p.servers[1].enabled = false;
+  const off = tableOf(p, { layout: 'worker' });
+  assert.equal(off.rows.find((r) => r.host === '10.0.0.11' && r.port === '9005').dim, true);
+  assert.deepEqual(tableOf(p).colorLegend.map((c) => c.level), ['ok', 'muted']);
+});
+
 test('worker layout CSV: one row per worker', () => {
   const p = pairsProject();
   p.servers[0].blocks[0].locations.push(location(proxy('/invoices/', 'ext_billing')));
   const table = tableOf(p, { layout: 'worker' });
   const csv = tableToDelimited(table);
   const lines = csv.trimEnd().split('\r\n');
-  assert.equal(lines[0], 'Backend host,Worker,Port,Role,Environment,Upstream groups,Balancing,Endpoint count,Endpoints served,Server configurations,conf.d files,Status');
+  assert.equal(lines[0], 'Backend host,Worker,Port,Role,Environment,Upstream groups,Balancing,Endpoint count,Endpoints served,Status per endpoint,Server configurations,conf.d files,Worker state');
   assert.equal(lines.length, table.rows.length + 1);
-  assert.equal(lines[1], '10.0.0.11,worker1,9000,,,ext_billing,round robin,2,"/billing/, /invoices/",External,conf.d/external.conf,Active');
+  assert.equal(lines[1], '10.0.0.11,worker1,9000,,,ext_billing,round robin,2,"/billing/, /invoices/","/billing/: Active, /invoices/: Active",External,conf.d/external.conf,Active');
 });
 
 test('status reflects validation and the state of the configuration', () => {

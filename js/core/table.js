@@ -179,6 +179,7 @@ export function buildRoutingTable(project, build, options = {}) {
         const status = statusOf(cfg, row, up, upIndex, issues);
         row.status = status[0];
         row.statusLevel = status[1];
+        row.dim = status[1] === 'muted'; // drawn in grey: nothing here is in service
         group.rows.push(row);
         rows.push(row);
       });
@@ -190,11 +191,21 @@ export function buildRoutingTable(project, build, options = {}) {
   const layout = FIXED_LAYOUTS.has(o.layout) ? o.layout : hosts.length && hosts.length <= MATRIX_MAX_HOSTS ? 'matrix' : 'list';
   const environments = [...new Set(rows.map((r) => r.environment).filter(Boolean))];
   const unused = project.upstreams.filter((u) => u.enabled && !usedUpstreams.has(u)).map((u) => t(u.name)).filter(Boolean);
-  const view = layout === 'worker' ? workerView(rows) : null;
+  const view = layout === 'worker' ? workerView(rows, o) : null;
 
   const legend = [];
   if (layout === 'matrix') legend.push('Each backend column shows the port nginx connects to on that host.');
-  if (layout === 'worker') legend.push('One row per backend worker: a host and port nginx connects to. Workers are numbered per host in ascending port order; the Port column shows the real port.');
+  if (layout === 'worker') {
+    legend.push('One row per backend worker: a host and port nginx connects to. The Status column shows the state of each application on that worker, not of the worker itself.');
+    if (view.namedPorts.length) legend.push(`Worker names come from the port list in the table options (${view.namedPorts.join(', ')}).`);
+    if (view.numbered) {
+      const who = view.namedPorts.length ? 'The other workers are' : 'Workers are';
+      const from = o.workerFromZero ? 'worker0' : 'worker1';
+      legend.push(o.workerNumbering === 'host'
+        ? `${who} numbered per host in ascending port order, from ${from}; the Port column shows the real port.`
+        : `${who} numbered by port across the project, from ${from}, so the same port is the same worker on every host.`);
+    }
+  }
   if (legendFlags.has('backup')) legend.push('backup: used only when the other servers are unavailable');
   if (legendFlags.has('down')) legend.push('down: marked unavailable');
   if (legendFlags.has('off')) legend.push('off: kept in the file as a comment (out of rotation)');
@@ -229,7 +240,21 @@ export function buildRoutingTable(project, build, options = {}) {
     multiEnvironment: environments.length > 1,
   };
   table.columns = displayColumns(table);
+  table.colorLegend = colorLegend(table);
   return table;
+}
+
+// What the colours of the status pills mean; only the levels the table actually uses are listed.
+const COLOR_MEANING = [
+  ['ok', 'Active', 'green: in service'],
+  ['warning', 'Review', 'amber: works, but something needs checking'],
+  ['error', 'Error', 'red: not serving traffic'],
+  ['muted', 'Off', 'grey: turned off or out of rotation'],
+];
+
+function colorLegend(table) {
+  const levels = new Set(table.rows.flatMap((r) => (r.endpointStatuses ? r.endpointStatuses.map((s) => s.level) : [r.statusLevel])));
+  return COLOR_MEANING.filter(([level]) => levels.has(level)).map(([level, label, meaning]) => ({ level, label, meaning }));
 }
 
 function addBackend(row, host, port, flags) {
@@ -285,11 +310,42 @@ function workerStatus(w) {
 }
 
 /**
+ * Names given to single ports in the settings, one entry per line: "9000 = worker0" (also "9000: web"
+ * or "9000 web"). Returns Map(port text -> name); lines without a port are ignored.
+ */
+export function parseWorkerNames(lines) {
+  const map = new Map();
+  for (const line of lines || []) {
+    const m = /^\s*([0-9]{1,5}|socket)\s*[=:]?\s*(.+?)\s*$/.exec(t(line));
+    if (m && m[2]) map.set(m[1], m[2].slice(0, 40));
+  }
+  return map;
+}
+
+/** The ports a project connects to, ascending: the list the worker names are written against. */
+export function portsInUse(rows) {
+  const ports = new Set();
+  for (const r of rows) for (const tg of r.targets) ports.add(portLabel(tg.port));
+  return [...ports].sort((a, b) => (/^\d+$/.test(a) && /^\d+$/.test(b) ? Number(a) - Number(b) : a.localeCompare(b)));
+}
+
+/**
  * Turns the endpoint rows inside out: every distinct backend target (host + port) becomes one worker
  * row listing the endpoints that reach it, and the rows are grouped by host. Endpoints without a
  * backend (static files, health checks, redirects) have no worker and are counted in a footnote.
+ *
+ * Worker names come from the port list in the settings; the rest are numbered, either by port across
+ * the whole project (so the same port is the same worker on every host) or per host.
  */
-function workerView(rows) {
+function workerView(rows, o) {
+  const names = parseWorkerNames(o.workerNames);
+  const first = o.workerFromZero ? 0 : 1;
+  const byPort = new Map(portsInUse(rows).map((p, i) => [p, `worker${i + first}`]));
+  const nameOf = (port, indexInHost) => names.get(port)
+    || (o.workerNumbering === 'host' ? `worker${indexInHost + first}` : byPort.get(port));
+  const named = new Set();
+  let numbered = 0;
+
   const byHost = new Map();
   for (const r of rows) {
     for (const tg of r.targets) {
@@ -311,7 +367,7 @@ function workerView(rows) {
       if (r.config) w.configs.add(r.config);
       if (r.file) w.files.add(r.file);
       if (r.environment) w.environments.add(r.environment);
-      w.endpoints.set(`${upstream}\u0000${r.endpoint}`, { upstream, endpoint: r.endpoint });
+      w.endpoints.set(`${upstream}\u0000${r.endpoint}`, { upstream, endpoint: r.endpoint, row: r });
     }
   }
 
@@ -322,16 +378,23 @@ function workerView(rows) {
     [...byHost.get(host).values()].sort(compareWorkers).forEach((w, i) => {
       const endpoints = [...w.endpoints.values()].sort((a, b) => a.upstream.localeCompare(b.upstream) || a.endpoint.localeCompare(b.endpoint));
       const [status, statusLevel] = workerStatus(w);
+      const port = portLabel(w.port);
+      if (names.has(port)) named.add(port); else numbered++;
       const row = {
         path: w.rows[0] ? w.rows[0].path : '', group: group.key,
-        host, worker: `worker${i + 1}`, port: portLabel(w.port),
+        host, worker: nameOf(port, i), port,
         flags: [...w.flags].sort((a, b) => flagRank(a) - flagRank(b) || a.localeCompare(b)).join(', '),
         upstreams: [...w.upstreams].sort(), method: [...w.methods].sort().join(', '),
         endpoints: endpoints.map((e) => e.endpoint), count: String(endpoints.length),
+        // One status per endpoint: the state of that application, not of the worker it runs on.
+        endpointStatuses: endpoints.map((e) => ({ text: e.row.status, level: e.row.statusLevel })),
         configs: [...w.configs], files: [...w.files], environment: [...w.environments].join(', '),
         backends: new Map(), backendList: [], targets: [], notes: [],
         status, statusLevel,
       };
+      // Grey the row only when no application on it is in service; an "off" worker whose applications
+      // still run elsewhere keeps its colours.
+      row.dim = row.endpointStatuses.every((s) => s.level === 'muted');
       group.rows.push(row);
       out.push(row);
     });
@@ -341,7 +404,7 @@ function workerView(rows) {
     group.sub = [plural(group.rows.length, 'worker'), plural(endpoints.size, 'endpoint'), `ports ${group.rows.map((r) => r.port).join(', ')}`].join('  ·  ');
     groups.push(group);
   }
-  return { rows: out, groups };
+  return { rows: out, groups, namedPorts: portsInUse(rows).filter((p) => named.has(p)), numbered };
 }
 
 /**
@@ -390,9 +453,9 @@ function workerColumns(table, any) {
   cols.push({ key: 'upstreams', label: 'Upstream group', kind: 'mono', wrap: true });
   if (any('method')) cols.push({ key: 'method', label: 'Balancing', kind: 'mono' });
   cols.push({ key: 'count', label: 'Count', kind: 'mono' });
-  cols.push({ key: 'endpoints', label: 'Endpoints served', kind: 'mono', wrap: true, maxLines: 6 });
+  cols.push({ key: 'endpoints', label: 'Endpoints served', kind: 'list' });
   if (configs.size > 1) cols.push({ key: 'configs', label: 'Served from', wrap: true });
-  cols.push({ key: 'status', label: 'Status', kind: 'status' });
+  cols.push({ key: 'endpointStatuses', label: 'Status', kind: 'statuses' });
   return cols;
 }
 
@@ -404,8 +467,20 @@ export function cellText(row, col) {
     case 'backends': return row.backendList.join(', ');
     case 'notes': return row.notes.join(', ');
     case 'upstreams': case 'endpoints': case 'configs': case 'files': return (row[col.key] || []).join(', ');
+    case 'endpointStatuses': return (row.endpointStatuses || []).map((s) => s.text).join(', ');
     default: return row[col.key] ?? '';
   }
+}
+
+/**
+ * Cells that hold one entry per endpoint rather than one string: the endpoints a worker serves
+ * ('list') and their statuses ('statuses'). Entries line up row by row, so an endpoint and its
+ * status sit on the same line. Returns null for ordinary cells.
+ */
+export function cellLines(row, col) {
+  if (col.kind === 'statuses') return (row.endpointStatuses || []).map((s) => ({ text: s.text, level: s.level }));
+  if (col.kind === 'list') return (row[col.key] || []).map((text) => ({ text }));
+  return null;
 }
 
 // ---------- CSV / TSV ----------
@@ -423,9 +498,10 @@ function exportColumns(table) {
       ['Balancing', (r) => r.method || (r.upstreams.some((u) => u !== 'direct') ? 'round robin' : '')],
       ['Endpoint count', (r) => r.count],
       ['Endpoints served', (r) => r.endpoints.join(', ')],
+      ['Status per endpoint', (r) => r.endpoints.map((e, i) => `${e}: ${r.endpointStatuses[i].text}`).join(', ')],
       ['Server configurations', (r) => r.configs.join(', ')],
       ['conf.d files', (r) => r.files.join(', ')],
-      ['Status', (r) => r.status],
+      ['Worker state', (r) => r.status],
     ];
   }
   const cols = [

@@ -243,6 +243,10 @@ S.settings = obj({
     groupRows: bool(true),
     proxyOnly: bool(false),
     includeDisabled: bool(true),
+    // Worker layout naming: numbering scheme, and names for single ports ("9000 = worker0").
+    workerNumbering: oneOf(['port', 'host']),
+    workerFromZero: bool(false),
+    workerNames: list(str()),
   }),
 });
 

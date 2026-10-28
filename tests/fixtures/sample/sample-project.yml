@@ -66,6 +66,7 @@ settings:
     layout: auto
     groupRows: true
     includeDisabled: true
+    workerNumbering: port
 rateLimitZones:
   - name: partner_api
     key: $binary_remote_addr

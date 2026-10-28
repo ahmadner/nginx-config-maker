@@ -566,6 +566,12 @@ select.input { padding-right: 28px; }
 .rt-error { background: var(--error-bg); color: var(--error); }
 .rt-muted .rt-pill, .rt-pill.rt-muted { background: var(--panel-3); color: var(--text-3); }
 .rt-legend { margin: 10px 0 0; padding-left: 18px; color: var(--text-3); font-size: 12.5px; }
+.rt-lines div { padding: 1px 0; white-space: nowrap; }
+.rt-lines div + div { margin-top: 2px; }
+.rt-colors { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0 0; }
+.rt-colors:empty { display: none; }
+.rt-color { display: inline-flex; align-items: center; gap: 6px; }
+.rt-color-text { color: var(--text-3); font-size: 12.5px; }
 .rt-legend:empty { display: none; }
 
 /* ---------- Import / export ---------- */

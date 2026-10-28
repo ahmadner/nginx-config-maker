@@ -1,9 +1,9 @@
 // Endpoint routing table card: options, a live preview, and PNG / CSV / clipboard exports.
 
 import { h, button, replace } from '../dom.js';
-import { selectField, checkField, grid } from '../fields.js';
+import { selectField, checkField, wordsField, grid } from '../fields.js';
 import { alertDialog, copyText, downloadBlob, downloadText, toast } from '../dialogs.js';
-import { buildRoutingTable, tableToDelimited, cellText, MATRIX_MAX_HOSTS } from '../../core/table.js';
+import { buildRoutingTable, tableToDelimited, cellText, cellLines, portsInUse, MATRIX_MAX_HOSTS } from '../../core/table.js';
 import { tableToPng } from '../table-image.js';
 import { slugify } from '../../core/util.js';
 
@@ -21,8 +21,16 @@ export function tableElement(table) {
   if (twoRows) head.push(h('tr', {}, hostCols.map((c) => h('th', { scope: 'col', class: 'rt-host-head mono', text: c.label }))));
 
   const strong = (c) => c.key === 'endpoint' || c.key === 'worker';
-  const rowEl = (r, i) => h('tr', { class: [i % 2 && 'rt-zebra', r.statusLevel === 'muted' && 'rt-muted'] }, cols.map((c) => {
+  const rowEl = (r, i) => h('tr', { class: [i % 2 && 'rt-zebra', r.dim && 'rt-muted'] }, cols.map((c) => {
     if (c.key === 'status') return h('td', {}, h('span', { class: ['rt-pill', `rt-${r.statusLevel}`], text: r.status }));
+    const lines = cellLines(r, c);
+    // One line per endpoint, so an endpoint and its status sit on the same line.
+    if (lines) {
+      return h('td', { class: ['rt-lines', c.kind === 'list' && 'mono'] },
+        lines.map((l) => (c.kind === 'statuses'
+          ? h('div', {}, h('span', { class: ['rt-pill', `rt-${l.level}`], text: l.text }))
+          : h('div', { text: l.text }))));
+    }
     if (c.kind === 'host') {
       const e = r.backends.get(c.host);
       return h('td', { class: 'rt-host' }, e ? h('span', {
@@ -54,10 +62,21 @@ export function tableElement(table) {
 export function routingTableCard(app) {
   const preview = h('div', { class: 'rt-wrap' });
   const summary = h('p', { class: 'hint rt-summary' });
+  const colors = h('p', { class: 'rt-colors' });
   const legend = h('ul', { class: 'rt-legend' });
 
   const current = () => buildRoutingTable(app.project, app.build);
   const byWorker = app.project.settings.table.layout === 'worker';
+  const ports = () => portsInUse(current().endpointRows);
+
+  /** Writes one "port = workerN" line per port in use, as a starting point to edit. */
+  const fillWorkerNames = () => {
+    const first = app.project.settings.table.workerFromZero ? 0 : 1;
+    const lines = ports().map((p, i) => `${p} = worker${i + first}`);
+    if (!lines.length) { toast('No backend ports yet. Add upstream groups or proxy endpoints first.', 'warning'); return; }
+    app.set(['settings', 'table', 'workerNames'], lines, { rerender: true });
+    toast(`Wrote ${lines.length} worker name${lines.length === 1 ? '' : 's'}. Edit them to match your servers.`, 'success');
+  };
 
   const downloadPng = async () => {
     try {
@@ -98,6 +117,25 @@ export function routingTableCard(app) {
       ], { label: 'Layout', width: 'l' }),
       checkField(app, ['settings', 'table', 'groupRows'], { label: byWorker ? 'Group rows by backend host (image and preview)' : 'Group rows by server block (image and preview)', width: 'm', rerender: true }),
     ),
+    byWorker ? grid(
+      selectField(app, ['settings', 'table', 'workerNumbering'], [
+        ['port', 'By port across the project (the same port is the same worker everywhere)'],
+        ['host', 'Per host, in ascending port order'],
+      ], { label: 'Number workers', width: 'l' }),
+      checkField(app, ['settings', 'table', 'workerFromZero'], { label: 'Start at worker0', width: 's', rerender: true }),
+    ) : null,
+    byWorker ? grid(
+      wordsField(app, ['settings', 'table', 'workerNames'], {
+        label: 'Worker names by port',
+        perLine: true,
+        rows: 3,
+        width: 'l',
+        placeholder: '9000 = worker0',
+        hint: `One per line: port = name. Ports in use: ${ports().join(', ') || 'none yet'}. Ports that are not listed keep their number.`,
+      }),
+      h('div', { class: 'field w-m' }, h('div', { class: 'label', text: 'From the ports in use' }),
+        button('Fill worker names', fillWorkerNames, { icon: 'plus', title: 'Write one line per port, numbered in port order' })),
+    ) : null,
     grid(
       checkField(app, ['settings', 'table', 'proxyOnly'], { label: 'Proxy endpoints only', width: 's', rerender: true }),
       checkField(app, ['settings', 'table', 'includeDisabled'], { label: 'Include turned-off configurations', width: 'm', rerender: true }),
@@ -110,6 +148,7 @@ export function routingTableCard(app) {
       button('Copy for Excel', copyTsv, { icon: 'copy', title: 'Copy as tab-separated text' })),
     summary,
     preview,
+    colors,
     legend);
 
   function refresh() {
@@ -121,6 +160,9 @@ export function routingTableCard(app) {
     const csv = table.layout === 'worker' ? 'The CSV has one row per worker with every column.' : 'The CSV always has one row per endpoint with every column.';
     summary.textContent = `${table.subtitle}. ${how} ${csv}`;
     replace(preview, table.rows.length ? tableElement(table) : h('p', { class: 'empty-small', text: table.layout === 'worker' ? 'No backend servers yet. Add upstream groups and proxy endpoints.' : 'No endpoints yet. Add locations to a server block.' }));
+    replace(colors, table.colorLegend.map((c) => h('span', { class: 'rt-color' },
+      h('span', { class: ['rt-pill', `rt-${c.level}`], text: c.label }),
+      h('span', { class: 'rt-color-text', text: c.meaning }))));
     replace(legend, [...table.legend, ...table.footnotes].map((l) => h('li', { text: l })));
   }
 
