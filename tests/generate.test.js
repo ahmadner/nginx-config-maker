@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { baseProject, buildAll, contentOf, fileAt, upstream, server, proxy, errorsOf, describeIssues, newProject } from './helpers.js';
+import { baseProject, buildAll, contentOf, fileAt, upstream, server, proxy, location, errorsOf, describeIssues, newProject } from './helpers.js';
 import { parseConfig } from '../js/core/syntax.js';
 
 const lines = (text) => text.split('\n').map((l) => l.trim());
@@ -296,4 +296,34 @@ test('generated text is identical for identical input', () => {
   const a = buildAll(baseProject()).files.map((f) => f.content).join('\n');
   const b = buildAll(baseProject()).files.map((f) => f.content).join('\n');
   assert.equal(a, b);
+});
+
+test('a location can be turned off: written as a comment, with a comment line of its own', () => {
+  const p = baseProject('Off');
+  p.settings.format.headerComments = false;
+  const blk = p.servers[0].blocks[0];
+  blk.locations[0].comment = 'Main application';
+  blk.locations.push(location({
+    ...blk.locations[0], path: '/old/', enabled: false, comment: 'Moved to the new gateway on 2026-10-01',
+    customDirectives: 'proxy_next_upstream error timeout;\n\nlimit_rate 100k;',
+  }));
+  const text = contentOf(buildAll(p), 'conf.d/external.conf');
+
+  assert.ok(text.includes([
+    '    # Main application',
+    '    location /app/ {',
+  ].join('\n')), text);
+  // The whole block is a comment, in one "#" column, with its indentation and blank lines kept.
+  assert.ok(text.includes([
+    '    # Moved to the new gateway on 2026-10-01',
+    '    # location /old/ {',
+    '    #     include /etc/nginx/proxy_params.conf;',
+    '    #     proxy_next_upstream error timeout;',
+    '    #',
+    '    #     limit_rate 100k;',
+    '    #     proxy_pass http://ext_app;',
+    '    # }',
+  ].join('\n')), text);
+  assert.ok(!/^\s*location \/old\//m.test(text), 'nginx never sees the turned-off location');
+  assert.deepEqual(parseConfig(text).errors, []);
 });

@@ -355,6 +355,8 @@ details[open] > .section-summary .caret svg { transform: rotate(90deg); }
 .loc-card > .section-summary { padding: 8px 0; }
 .loc-card > .section-body { padding-left: 4px; }
 .loc-head { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.loc-off:not([open]) > .section-summary .loc-path, .loc-off:not([open]) > .section-summary .section-sub { color: var(--text-3); text-decoration: line-through; }
+.loc-off > .section-summary .type-chip { opacity: 0.6; }
 .loc-path { font-weight: 600; }
 .loc-card .section-sub { font-family: var(--mono); font-size: 12px; }
 .type-chip { padding: 1px 7px; border-radius: 4px; font: 600 11px var(--font); text-transform: uppercase; letter-spacing: 0.03em; background: var(--panel-3); color: var(--text-2); }

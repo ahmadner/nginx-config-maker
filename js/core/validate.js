@@ -29,10 +29,12 @@ class Validator {
     this.gen = gen;
     this.issues = [];
     this.once = new Set();
+    this.soft = false;
   }
 
   add(level, path, message, extra = {}) {
-    this.issues.push({ level, path, message, ...extra });
+    // Inside a commented-out location nothing reaches nginx, so its problems never block the package.
+    this.issues.push({ level: this.soft && level === 'error' ? 'warning' : level, path, message, ...extra });
   }
 
   error(path, message) { this.add('error', path, message); }
@@ -372,10 +374,18 @@ class Validator {
       const LP = `${P}.locations.${k}`;
       const path = t(loc.path);
       const key = `${loc.match === 'exact' ? '=' : loc.match.startsWith('regex') ? loc.match : 'prefix'}|${path}`;
-      if (path && locKeys.has(key)) this.error(`${LP}.path`, `"${locationLabel(loc)}" is already defined in this server block (location ${locKeys.get(key) + 1}); nginx rejects duplicate locations.`);
-      else locKeys.set(key, k);
+      // A commented-out location is not read by nginx: it never collides, and its own problems are warnings.
+      if (loc.enabled) {
+        if (path && locKeys.has(key)) this.error(`${LP}.path`, `"${locationLabel(loc)}" is already defined in this server block (location ${locKeys.get(key) + 1}); nginx rejects duplicate locations.`);
+        else locKeys.set(key, k);
+      }
+      this.soft = !loc.enabled;
       this.locationRules(cfg, blk, loc, LP);
+      this.soft = false;
     });
+    if (blk.locations.length && !blk.locations.some((l) => l.enabled)) {
+      this.warn(`${P}.locations`, 'Every location in this block is commented out, so Nginx serves files from its default root.');
+    }
   }
 
   generalRules(x, P) {

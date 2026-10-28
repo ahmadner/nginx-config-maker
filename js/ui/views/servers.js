@@ -166,7 +166,8 @@ function configEditor(app, ci) {
 function blockSummary(blk) {
   const listens = blk.listen.map((l) => `${t(l.address) ? `${t(l.address)}:` : ''}${l.port ?? '?'}${l.ssl ? ' ssl' : ''}`).join(', ');
   const names = blk.serverNames.map(t).filter(Boolean).join(' ');
-  return `${listens || 'no listener'} · ${names || 'no server name'} · ${blk.locations.length} location${blk.locations.length === 1 ? '' : 's'}`;
+  const off = blk.locations.filter((l) => !l.enabled).length;
+  return `${listens || 'no listener'} · ${names || 'no server name'} · ${blk.locations.length} location${blk.locations.length === 1 ? '' : 's'}${off ? ` (${off} commented out)` : ''}`;
 }
 
 function blockCard(app, ci, bi) {

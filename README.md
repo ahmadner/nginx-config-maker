@@ -84,7 +84,7 @@ Node.js 22 or newer is needed for the dev server and the tests. The app itself r
 | **Project** | A named set of everything below, such as *Production Servers*, *DR Environment* or *Development Environment*. Create, open, rename, duplicate, reset and delete projects in the left sidebar. |
 | **Server configuration** | One generated file (for example `conf.d/external.conf`) with one or more server blocks. |
 | **Server block** | One `server { }`: listeners, server names, TLS, logging, proxy defaults, security, error pages and locations. |
-| **Location** | One `location { }`: a proxy to an upstream group or a single backend, a redirect, static files, a health check, the stub status page, or custom directives. |
+| **Location** | One `location { }`: a proxy to an upstream group or a single backend, a redirect, static files, a health check, the stub status page, or custom directives. Each location can carry a *Comment*, and turning *Active* off keeps the whole block in the file as a comment. |
 | **Upstream group** | One `upstream name { }` with its backend servers, in its own file. |
 | **Generated file** | Output derived from the above. It is never edited directly. |
 
@@ -103,6 +103,31 @@ Typical workflow:
 4. Review the issues inline, in the preview and on the Overview tab.
 5. **Download ZIP**, or download single files from the preview or the Generated files tab.
 6. **Export YAML** to keep or share the project.
+
+### Comments, and turning a location off
+
+Every location in *Servers → Locations* has two fields for keeping it readable later:
+
+- **Comment** — one line written above the `location` block, for what it does or why it is there. (*Group comment* is different: it writes a `# ── Pair A ─────` divider above a run of locations that share it.)
+- **Active** — off writes the whole block to the file as a comment, so Nginx ignores it but the configuration stays in the file for whoever reads it next:
+
+```nginx
+    # Main application
+    location /app/ {
+        include /etc/nginx/proxy_params.conf;
+        proxy_pass http://ext_app;
+    }
+
+    # Moved to the new gateway on 2026-10-01
+    # location /old/ {
+    #     include /etc/nginx/proxy_params.conf;
+    #     proxy_pass http://ext_app;
+    # }
+```
+
+The `#` stays in one column with the block's own indentation inside it, so uncommenting is a column delete, and blank lines inside the block keep their `#`.
+
+Because Nginx never reads a commented-out location, it does not collide with a live one — you can keep the old and the new version of a path side by side — and its own problems (a missing upstream, an empty path) become warnings instead of errors, so they never block the ZIP. It appears in the endpoint routing table with the status *Commented out*, and *Include turned-off configurations* leaves it out along with the turned-off files.
 
 Features that need something outside the package are marked in the UI and listed in the package README:
 
@@ -138,7 +163,7 @@ How it is laid out:
 - **Rows are grouped by server block.** A band shows the file, the listen port, the server names and the category, so those values are not repeated on every row. Turn grouping off to get them as columns instead.
 - **Columns that would be empty are left out.** These are *Balancing* (round robin is the default), *Backend path* and *Notes*.
 - **Notes** list per-endpoint overrides: timeouts, body size, WebSocket, allowed methods, IP allowlists, passwords, rate limits, internal-only and HTTPS backends.
-- **Status** comes from validation: *Active*, *Review* (warnings), *Error*, *Missing upstream*, *Upstream off*, *No backend* or *Disabled*. Upstream groups that no endpoint uses are listed under the table.
+- **Status** comes from validation: *Active*, *Review* (warnings), *Error*, *Missing upstream*, *Upstream off*, *No backend*, *Commented out* or *Disabled*. Upstream groups that no endpoint uses are listed under the table.
 - Redirects, static files, health checks and the status page appear with what handles them. Choose *Proxy endpoints only* to leave them out.
 
 ### Group by backend worker
@@ -209,7 +234,7 @@ The CSV is also added to the ZIP package as `routing-table.csv` (*Add routing-ta
 Every change is checked immediately.
 
 - **Errors** block the ZIP and the download of the affected file: missing required fields, ports outside 1–65535, invalid IP addresses, hostnames, CIDR ranges and server names, duplicate upstream names (compared without case, like Nginx), duplicate or case-colliding output paths, path traversal, missing or turned-off upstream references, HTTPS without certificate paths, PEM or `data:` key material in fields, hash load balancing without a key, `backup` with `ip_hash`/`hash`/`random`, duplicate `default_server` or `server_name` on one address and port, SSL and plain HTTP on the same port, duplicate locations or listeners, a URI in `proxy_pass` inside a regex location, insecure TLS protocols, and files that `nginx.conf` would load twice. Custom directives are checked for syntax errors (missing `;`, unbalanced braces or quotes), for directives not allowed in their block (`listen` inside a location, for example), and for duplicates of single-use directives.
-- **Warnings** need review but do not block: placeholder values (documentation IP ranges, example.com), certificates without an SSL listener, keepalive groups whose locations never reuse connections, trailing-slash mismatches between location and proxy path, `alias` path traversal, files that nginx.conf does not load, unknown or code-running custom directives, includes of files outside the package, and similar.
+- **Warnings** need review but do not block: everything inside a commented-out location (Nginx never reads it), placeholder values (documentation IP ranges, example.com), certificates without an SSL listener, keepalive groups whose locations never reuse connections, trailing-slash mismatches between location and proxy path, `alias` path traversal, files that nginx.conf does not load, unknown or code-running custom directives, includes of files outside the package, and similar.
 - **Notes** describe what the target server needs (modules, log formats, log folders, certificates).
 
 The generator also handles one common Nginx pitfall automatically. `proxy_set_header`, `add_header` and `proxy_hide_header` are inherited all-or-nothing, so a location that sets one header silently loses every header from the server block. When that happens, the generator repeats the inherited directives in the location (or re-includes `security_headers.conf`), and says so in a comment.
@@ -302,7 +327,7 @@ Full field list:
 | upstream server | `address` (IP, hostname or `unix:/path`), `port`, `weight`, `maxFails`, `failTimeout`, `maxConns`, `backup`, `down`, `enabled` (false = commented out), `comment` |
 | server configuration | `name`, `description`, `environment`, `category`, `enabled`, `outputDir`, `fileName`, `httpDirectives` (http-level text at the top of the file), `blocks[]` |
 | server block | `label`, `listen[]` (`address`, `port`, `ssl`, `defaultServer`), `serverNames[]`, `http2`, `tls` (`certificate`, `certificateKey`, `includeParams`), `redirectHttp` (`enabled`, `port`, `code`), `securityHeaders`, `clientMaxBodySize`, `sendTimeout`, `logging`, `proxy`, `responseHeaders[]`, `access`, `rateLimit`, `errorPages[]` (`codes`, `target`), `customDirectives`, `locations[]` |
-| location | `name`, `group`, `match` (`prefix`, `exact`, `prefix_no_regex`, `regex`, `regex_ci`), `path`, `type`, `internal`, `proxyPass` (`target`: `upstream`/`direct`, `upstream`, `scheme`, `address`, `port`, `uri`), `return` (`code`, `value`), `static` (`root`, `alias`, `index`, `tryFiles`), `health` (`text`), `methods[]`, `clientMaxBodySize`, `sendTimeout`, `logging`, `proxy`, `responseHeaders[]`, `access`, `rateLimit`, `customDirectives`. Only the section for the location's type is saved. |
+| location | `name`, `group`, `enabled` (off: written as a comment), `comment`, `match` (`prefix`, `exact`, `prefix_no_regex`, `regex`, `regex_ci`), `path`, `type`, `internal`, `proxyPass` (`target`: `upstream`/`direct`, `upstream`, `scheme`, `address`, `port`, `uri`), `return` (`code`, `value`), `static` (`root`, `alias`, `index`, `tryFiles`), `health` (`text`), `methods[]`, `clientMaxBodySize`, `sendTimeout`, `logging`, `proxy`, `responseHeaders[]`, `access`, `rateLimit`, `customDirectives`. Only the section for the location's type is saved. |
 | logging | `accessLog`, `accessLogFormat`, `accessLogOff`, `errorLog`, `errorLogLevel` (+ `perLocation` on server blocks) |
 | proxy | `includeParams`, `httpVersion`, `clearConnectionHeader`, `hostHeader`, `realIp`, `forwardedFor`, `forwardedProto`, `requestHeaders[]` (`name`, `value`), `connectTimeout`, `sendTimeout`, `readTimeout`, `buffering`, `requestBuffering`, `bufferSize`, `buffers`, `busyBuffersSize`, `redirect`, `hideHeaders[]`, `websocket`, `sslServerName` |
 | access | `rules[]` (`action`: allow/deny, `source`), `basicAuthRealm`, `basicAuthUserFile` |
@@ -338,7 +363,7 @@ npm run fixtures       # regenerate tests/fixtures/sample after an intended outp
 npm run vendor:check   # verify the vendored libraries against vendor/checksums.json
 ```
 
-The tests cover generation (upstreams, every load-balancing method, servers, TLS, HTTP/2 syntaxes, redirects, locations of every type, proxy settings and header inheritance, custom directives, multiple blocks, nested paths, disabled files), validation (every error class above), YAML round-trips and malformed or hostile input, ZIP structure and manifest checksums, the routing table (layouts including the worker grouping and its naming options, markers, per-endpoint status, CSV quoting and formula protection), project storage, golden files for the sample project, and static-hosting compatibility (relative imports, CSP, no network or dynamic code, subpath serving).
+The tests cover generation (upstreams, every load-balancing method, servers, TLS, HTTP/2 syntaxes, redirects, locations of every type, proxy settings and header inheritance, custom directives, multiple blocks, nested paths, disabled files), validation (every error class above), YAML round-trips and malformed or hostile input, ZIP structure and manifest checksums, the routing table (layouts including the worker grouping and its naming options, markers, per-endpoint status, CSV quoting and formula protection), comments on locations and locations turned into comments, project storage, golden files for the sample project, and static-hosting compatibility (relative imports, CSP, no network or dynamic code, subpath serving).
 
 Project structure:
 

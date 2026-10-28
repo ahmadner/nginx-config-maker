@@ -209,3 +209,16 @@ test('an empty project gives an empty table', () => {
   assert.equal(table.rows.length, 0);
   assert.equal(tableToDelimited(table).split('\r\n').filter(Boolean).length, 1);
 });
+
+test('a commented-out location is shown as such, or left out with the other turned-off entries', () => {
+  const p = pairsProject();
+  p.servers[0].blocks[0].locations[0].enabled = false;
+  const table = tableOf(p);
+  assert.equal(row(table, '/billing/').status, 'Commented out');
+  assert.equal(row(table, '/billing/').statusLevel, 'muted');
+  assert.equal(tableOf(p, { includeDisabled: false }).rows.some((r) => r.endpoint === '/billing/'), false);
+  // In the worker layout its backends keep their colours only if another endpoint still uses them.
+  const workers = tableOf(p, { layout: 'worker' });
+  assert.deepEqual(workers.rows.find((r) => r.host === '10.0.0.11' && r.port === '9000').endpointStatuses, [{ text: 'Commented out', level: 'muted' }]);
+  assert.equal(workers.rows.find((r) => r.host === '10.0.0.11' && r.port === '9000').dim, true);
+});

@@ -134,6 +134,7 @@ export function buildRoutingTable(project, build, options = {}) {
       group.sub = [group.file, `listen ${group.listen}`, names && names !== '_' ? names : 'any host name', group.category].filter(Boolean).join('  ·  ');
       blk.locations.forEach((loc, li) => {
         if (o.proxyOnly && loc.type !== 'proxy') return;
+        if (!loc.enabled && !o.includeDisabled) return;
         const path = `servers.${ci}.blocks.${bi}.locations.${li}`;
         const row = {
           path, group: group.key,
@@ -176,7 +177,7 @@ export function buildRoutingTable(project, build, options = {}) {
         } else {
           row.target = targetText(loc);
         }
-        const status = statusOf(cfg, row, up, upIndex, issues);
+        const status = statusOf(cfg, loc, row, up, upIndex, issues);
         row.status = status[0];
         row.statusLevel = status[1];
         row.dim = status[1] === 'muted'; // drawn in grey: nothing here is in service
@@ -273,8 +274,9 @@ function addBackend(row, host, port, flags) {
   row.backendList.push(`${hostText}${port === 'socket' || port === null || port === undefined ? '' : `:${port}`}${flags.length ? ` (${flags.join(', ')})` : ''}`);
 }
 
-function statusOf(cfg, row, up, upIndex, issues) {
+function statusOf(cfg, loc, row, up, upIndex, issues) {
   if (!cfg.enabled) return ['Disabled', 'muted'];
+  if (!loc.enabled) return ['Commented out', 'muted'];
   const own = issues.filter((i) => isUnder(i.path || '', row.path));
   const upIssues = upIndex === -1 ? [] : issues.filter((i) => isUnder(i.path || '', `upstreams.${upIndex}`));
   if (row.type === 'proxy' && row.upstream && !up) return ['Missing upstream', 'error'];

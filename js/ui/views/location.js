@@ -105,10 +105,19 @@ export function locationCard(app, ci, bi, li) {
     selectField(app, [...base, 'type'], Object.entries(TYPE_LABELS), { label: 'Handles requests by', width: 'm', onChange: (v) => app.update(() => changeLocationType(loc, v)) }),
   ));
   body.push(grid(
+    checkField(app, [...base, 'enabled'], {
+      label: 'Active', width: 's', rerender: true,
+      hint: 'Off: the whole location stays in the file as a comment, so Nginx ignores it.',
+    }),
+    textField(app, [...base, 'comment'], {
+      label: 'Comment', width: 'l', mono: false,
+      placeholder: loc.enabled ? 'written as a comment above the location' : 'why it is off, e.g. moved to the new gateway',
+    }),
     textField(app, [...base, 'name'], { label: 'Name (log files)', width: 's', placeholder: locationLogName({ ...loc, name: '' }, li) }),
     textField(app, [...base, 'group'], { label: 'Group comment', width: 'm', placeholder: 'e.g. Pair A (11/12)', options: groups }),
     checkField(app, [...base, 'internal'], { label: 'Internal only (error pages, X-Accel)', width: 'm' }),
   ));
+  if (!loc.enabled) body.push(note('This location is commented out: it is written to the file for reference, and Nginx does not read it. Its remaining messages are warnings, not errors.'));
 
   // What the location does.
   if (loc.type === 'proxy') {
@@ -221,8 +230,11 @@ export function locationCard(app, ci, bi, li) {
 
   const isNewOrSmall = list.length <= 2;
   return section(app, loc.id, {
-    title: h('span', { class: 'loc-head' }, typeChip(loc.type), titleText), summary: summaryText, open: isNewOrSmall,
-    issuePath: pathKey(base), cls: 'loc-card', actions, level: 4,
+    title: h('span', { class: 'loc-head' }, typeChip(loc.type), titleText,
+      loc.enabled ? null : badgeEl({ text: 'commented out', kind: 'muted', title: 'Written to the file as a comment; Nginx does not read it.' })),
+    summary: summaryText,
+    open: isNewOrSmall,
+    issuePath: pathKey(base), cls: loc.enabled ? 'loc-card' : 'loc-card loc-off', actions, level: 4,
   }, body);
 }
 

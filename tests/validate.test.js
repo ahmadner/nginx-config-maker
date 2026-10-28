@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { baseProject, buildAll, upstream, server, proxy, errorsOf, findIssue, describeIssues, newProject } from './helpers.js';
+import { baseProject, buildAll, upstream, server, proxy, location, errorsOf, findIssue, describeIssues, newProject } from './helpers.js';
 import { sampleProject } from '../js/core/sample.js';
 
 const expectIssue = (b, level, path, re) => {
@@ -316,4 +316,30 @@ test('multiple environments in separate projects stay independent', () => {
   const c = buildAll(dr).files.find((f) => f.kind === 'upstream').content;
   assert.ok(a.includes('10.0.0.11') && c.includes('10.9.0.11'));
   assert.ok(a.includes('project "Production"') && c.includes('project "DR"'));
+});
+
+test('a commented-out location does not collide, and its own errors are warnings', () => {
+  const p = baseProject();
+  const blk = p.servers[0].blocks[0];
+  blk.locations.push(location({ ...blk.locations[0], enabled: false, proxyPass: { target: 'upstream', upstream: 'ext_gone', scheme: 'http', uri: '' } }));
+  const b = buildAll(p);
+  const LP = 'servers.0.blocks.0.locations.1';
+
+  // Same path as location 1, and a missing upstream: nginx reads neither, so nothing blocks the package.
+  assert.deepEqual(errorsOf(b), [], describeIssues(b));
+  expectIssue(b, 'warning', `${LP}.proxyPass.upstream`, /not defined in this project/);
+
+  // Turned on again, both problems are errors.
+  blk.locations[1].enabled = true;
+  const on = buildAll(p);
+  expectIssue(on, 'error', `${LP}.path`, /already defined in this server block/);
+  expectIssue(on, 'error', `${LP}.proxyPass.upstream`, /not defined in this project/);
+});
+
+test('a block whose locations are all commented out is only a warning', () => {
+  const p = baseProject();
+  p.servers[0].blocks[0].locations[0].enabled = false;
+  const b = buildAll(p);
+  assert.deepEqual(errorsOf(b), [], describeIssues(b));
+  expectIssue(b, 'warning', 'servers.0.blocks.0.locations', /Every location in this block is commented out/);
 });

@@ -191,6 +191,7 @@ servers:
           perLocation: true
         locations:
           - group: Pair A (192.0.2.11 / .12)
+            enabled: true
             match: prefix
             path: /portal/
             type: proxy
@@ -202,6 +203,7 @@ servers:
               includeParams: true
           - name: portal-ws
             group: Pair A (192.0.2.11 / .12)
+            enabled: true
             match: prefix
             path: /portal/ws/
             type: proxy
@@ -215,6 +217,7 @@ servers:
               readTimeout: 1h
               websocket: true
           - group: Payments (192.0.2.21 - .23)
+            enabled: true
             match: prefix
             path: /payments/
             type: proxy
@@ -225,7 +228,8 @@ servers:
             proxy:
               includeParams: true
               readTimeout: 120s
-          - match: exact
+          - enabled: true
+            match: exact
             path: /healthz
             type: health
             health:
@@ -254,6 +258,7 @@ servers:
           status: 429
         locations:
           - name: partner-v1
+            enabled: true
             match: prefix
             path: /v1/
             type: proxy
@@ -283,7 +288,8 @@ servers:
         logging:
           perLocation: true
         locations:
-          - match: prefix
+          - enabled: true
+            match: prefix
             path: /reports/
             type: proxy
             proxyPass:
@@ -293,7 +299,8 @@ servers:
             proxy:
               includeParams: true
               readTimeout: 600s
-          - match: prefix
+          - enabled: true
+            match: prefix
             path: /search/
             type: proxy
             proxyPass:
@@ -302,7 +309,8 @@ servers:
               scheme: http
             proxy:
               includeParams: true
-          - match: exact
+          - enabled: true
+            match: exact
             path: /nginx_status
             type: status
             access:
@@ -360,13 +368,15 @@ servers:
               - 504
             target: /50x.html
         locations:
-          - match: exact
+          - enabled: true
+            match: exact
             path: /
             type: return
             return:
               code: 301
               value: https://$host/visitor/
-          - match: prefix
+          - enabled: true
+            match: prefix
             path: /visitor/
             type: proxy
             proxyPass:
@@ -374,7 +384,8 @@ servers:
               upstream: ext_visitor
               scheme: http
               uri: /visitor/
-          - match: exact
+          - enabled: true
+            match: exact
             path: /50x.html
             type: static
             internal: true
@@ -393,7 +404,8 @@ servers:
         serverNames:
           - legacy.example.com
         locations:
-          - match: prefix
+          - enabled: true
+            match: prefix
             path: /
             type: proxy
             proxyPass:

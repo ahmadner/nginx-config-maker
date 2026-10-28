@@ -458,6 +458,7 @@ class Generator {
       } else if (li > 0) {
         out.push(blank());
       }
+      if (t(loc.comment)) out.push(comment(t(loc.comment)));
       out.push(this.locationBlock(cfg, ci, blk, bi, loc, li, serverEntries));
     });
     return out;
@@ -496,7 +497,7 @@ class Generator {
     this.applyInheritance(children, serverEntries, src);
 
     const m = MATCH_PREFIX[loc.match];
-    return block('location', [...(m ? [m] : []), t(loc.path)], children, { src });
+    return block('location', [...(m ? [m] : []), t(loc.path)], children, { src, commented: !loc.enabled });
   }
 
   /**

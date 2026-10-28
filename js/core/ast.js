@@ -2,7 +2,9 @@
 //
 // Node types:
 //   { t: 'dir', name, args, src?, ag?, ac?, trail?, commented?, origin? }   directive "name args;"
-//   { t: 'block', name, args, children, src? }                               "name args { ... }"
+//   { t: 'block', name, args, children, src?, commented? }                   "name args { ... }"
+// `commented` writes the node as a comment: the whole block, its children and its closing brace are
+// prefixed with "# " at the block's own indentation, so nginx ignores it and one column brings it back.
 //   { t: 'comment', text }   { t: 'blank' }   { t: 'raw', text, src }          custom text, kept as written
 //   { t: 'marker', family }                                                  placeholder, prints nothing
 // Arguments are raw values; the serializer quotes them when Nginx needs it. { q: value } forces quotes.
@@ -53,13 +55,13 @@ export function serialize(nodes, { indent = 4, align = true } = {}) {
   const out = [];
   const lineMap = [];
   const pad = (depth) => ' '.repeat(depth * indent);
-  const lastBlankOrOpen = () => out.length === 0 || out[out.length - 1] === '' || out[out.length - 1].endsWith('{');
+  const lastBlankOrOpen = (pre = '') => out.length === 0 || out[out.length - 1] === emptyLine(pre) || out[out.length - 1].endsWith('{');
   const record = (n, extra) => { if (n.src) lineMap.push({ line: out.length + 1, src: n.src, ...extra }); };
 
-  function emitDir(n, depth, nameW, argW) {
+  function emitDir(n, depth, nameW, argW, pre = '') {
     const args = n.args.map(argText);
     const name = quoteArg(n.name);
-    let s = pad(depth) + (n.commented ? '# ' : '');
+    let s = pre + pad(depth) + (n.commented ? '# ' : '');
     if (!args.length) s += name;
     else if (argW && args.length >= 2) s += `${nameW ? name.padEnd(nameW) : name} ${args[0].padEnd(argW)} ${args.slice(1).join(' ')}`;
     else s += `${nameW ? name.padEnd(nameW) : name} ${args.join(' ')}`;
@@ -69,7 +71,7 @@ export function serialize(nodes, { indent = 4, align = true } = {}) {
     out.push(s);
   }
 
-  function emitRaw(n, depth) {
+  function emitRaw(n, depth, pre = '') {
     const lines = n.text.replace(/\r\n?/g, '\n').split('\n');
     let first = 0;
     let last = lines.length - 1;
@@ -81,13 +83,16 @@ export function serialize(nodes, { indent = 4, align = true } = {}) {
     const common = Math.min(...indents);
     body.forEach((l, k) => {
       const expanded = l.replace(/^[ \t]*/, (m) => m.replace(/\t/g, '    '));
-      const text = l.trim() ? pad(depth) + expanded.slice(common).replace(/\s+$/, '') : '';
+      const text = l.trim() ? pre + pad(depth) + expanded.slice(common).replace(/\s+$/, '') : emptyLine(pre);
       record(n, { rawLine: first + k + 1 });
       out.push(text);
     });
   }
 
-  function emitList(list, depth) {
+  // Inside a commented-out block an empty line keeps the "#" column, so the block reads as one piece.
+  const emptyLine = (pre) => (pre ? pre.replace(/\s+$/, '') : '');
+
+  function emitList(list, depth, pre = '') {
     let i = 0;
     while (i < list.length) {
       const n = list[i];
@@ -99,34 +104,37 @@ export function serialize(nodes, { indent = 4, align = true } = {}) {
         const nameW = withArgs.length > 1 ? Math.max(...withArgs.map((r) => quoteArg(r.name).length)) : 0;
         const colNodes = run.filter((r) => r.ac && r.args.length >= 2);
         const argW = colNodes.length > 1 ? Math.max(...colNodes.map((r) => argText(r.args[0]).length)) : 0;
-        for (const r of run) emitDir(r, depth, r.args.length ? nameW : 0, r.ac ? argW : 0);
+        for (const r of run) emitDir(r, depth, r.args.length ? nameW : 0, r.ac ? argW : 0, pre);
         i = j;
         continue;
       }
-      emitNode(n, depth);
+      emitNode(n, depth, pre);
       i++;
     }
   }
 
-  function emitNode(n, depth) {
+  function emitNode(n, depth, pre = '') {
     switch (n.t) {
-      case 'dir': emitDir(n, depth, 0, 0); break;
+      case 'dir': emitDir(n, depth, 0, 0, pre); break;
       case 'block': {
         const head = [quoteArg(n.name), ...n.args.map(argText)].join(' ');
+        // A commented block restarts the indentation inside the comment, so "#" stays in one column.
+        const inner = n.commented ? `${pre + pad(depth)}# ` : pre;
+        const body = n.commented ? 1 : depth + 1;
         record(n);
-        out.push(`${pad(depth)}${head} {`);
-        emitList(n.children, depth + 1);
-        while (out.length && out[out.length - 1] === '') out.pop();
-        out.push(`${pad(depth)}}`);
+        out.push(`${inner}${n.commented ? '' : pad(depth)}${head} {`);
+        emitList(n.children, body, inner);
+        while (out.length && out[out.length - 1] === emptyLine(inner)) out.pop();
+        out.push(`${inner}${n.commented ? '' : pad(depth)}}`);
         break;
       }
       case 'comment':
-        for (const line of cleanComment(n.text).split('\n')) out.push(`${pad(depth)}#${line ? ` ${line}` : ''}`.replace(/\s+$/, ''));
+        for (const line of cleanComment(n.text).split('\n')) out.push(`${pre}${pad(depth)}#${line ? ` ${line}` : ''}`.replace(/\s+$/, ''));
         break;
       case 'blank':
-        if (!lastBlankOrOpen()) out.push('');
+        if (!lastBlankOrOpen(pre)) out.push(emptyLine(pre));
         break;
-      case 'raw': emitRaw(n, depth); break;
+      case 'raw': emitRaw(n, depth, pre); break;
       default: break;
     }
   }

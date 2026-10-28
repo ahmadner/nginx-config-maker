@@ -108,6 +108,9 @@ S.listen = obj({ address: str(), port: int(), ssl: bool(), defaultServer: bool()
 S.location = obj({
   name: str(),
   group: str(),
+  // Off: the whole location block is written to the file as a comment, so nginx ignores it.
+  enabled: bool(true),
+  comment: str(),
   match: oneOf(LOCATION_MATCHES),
   path: str(),
   type: oneOf(LOCATION_TYPES),
