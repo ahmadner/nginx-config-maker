@@ -5,12 +5,15 @@
 //   matrix  one column per backend host, the port in each cell (compact when hosts are shared)
 //   list    one "Backend servers" column with host:port entries (for many hosts)
 //   auto    matrix up to MATRIX_MAX_HOSTS hosts, list beyond that
+//   worker  inverted: one row per backend worker (a host and port) with the endpoints it serves,
+//           grouped by host — "worker2 on 10.0.0.129 serves /app1/, /app2/, /app3/"
 
 import { entityFilePath, locationLabel } from './model.js';
 import { backendKind, isIPv4, isIPv6, stripBrackets } from './net.js';
-import { t } from './util.js';
+import { plural, t } from './util.js';
 
 export const MATRIX_MAX_HOSTS = 8;
+const FIXED_LAYOUTS = new Set(['matrix', 'list', 'worker']);
 
 const METHOD_LABEL = { least_conn: 'least_conn', ip_hash: 'ip_hash', hash: 'hash', random: 'random' };
 const MATCH_NAME = { prefix: 'prefix', exact: 'exact', prefix_no_regex: 'prefix (^~)', regex: 'regex', regex_ci: 'regex (case-insensitive)' };
@@ -96,6 +99,9 @@ function listenText(blk) {
 /**
  * Builds the table. `build` is buildAll(project) (used for the status column); options override
  * project.settings.table. Returns { title, subtitle, layout, hosts, groups, rows, columns, legend, footnotes, meta }.
+ * `rows` and `groups` are what the image, the preview and the CSV render: endpoints grouped by server
+ * block, or — in the worker layout — backend workers grouped by host. The endpoint rows stay available
+ * as `endpointRows` / `endpointGroups`.
  */
 export function buildRoutingTable(project, build, options = {}) {
   const s = project.settings;
@@ -122,8 +128,10 @@ export function buildRoutingTable(project, build, options = {}) {
         category: titleCase(t(cfg.category)),
         environment: t(cfg.environment),
         disabled: !cfg.enabled,
+        note: cfg.enabled ? '' : 'turned off',
         rows: [],
       };
+      group.sub = [group.file, `listen ${group.listen}`, names && names !== '_' ? names : 'any host name', group.category].filter(Boolean).join('  ·  ');
       blk.locations.forEach((loc, li) => {
         if (o.proxyOnly && loc.type !== 'proxy') return;
         const path = `servers.${ci}.blocks.${bi}.locations.${li}`;
@@ -132,7 +140,7 @@ export function buildRoutingTable(project, build, options = {}) {
           endpoint: locationLabel(loc), endpointPath: t(loc.path), match: MATCH_NAME[loc.match] || loc.match, type: loc.type,
           category: group.category, environment: group.environment, config: t(cfg.name), file, listen: group.listen, serverNames: names,
           upstream: '', method: '', upstreamFile: '', target: '', backendPath: '',
-          backends: new Map(), backendList: [], notes: locationNotes(loc),
+          backends: new Map(), backendList: [], targets: [], notes: locationNotes(loc),
           status: 'Active', statusLevel: 'ok',
         };
         let up = null;
@@ -179,34 +187,43 @@ export function buildRoutingTable(project, build, options = {}) {
   });
 
   const hosts = [...hostSet].sort(compareHosts);
-  const layout = o.layout === 'matrix' || o.layout === 'list' ? o.layout : hosts.length && hosts.length <= MATRIX_MAX_HOSTS ? 'matrix' : 'list';
+  const layout = FIXED_LAYOUTS.has(o.layout) ? o.layout : hosts.length && hosts.length <= MATRIX_MAX_HOSTS ? 'matrix' : 'list';
   const environments = [...new Set(rows.map((r) => r.environment).filter(Boolean))];
   const unused = project.upstreams.filter((u) => u.enabled && !usedUpstreams.has(u)).map((u) => t(u.name)).filter(Boolean);
+  const view = layout === 'worker' ? workerView(rows) : null;
 
   const legend = [];
   if (layout === 'matrix') legend.push('Each backend column shows the port nginx connects to on that host.');
+  if (layout === 'worker') legend.push('One row per backend worker: a host and port nginx connects to. Workers are numbered per host in ascending port order; the Port column shows the real port.');
   if (legendFlags.has('backup')) legend.push('backup: used only when the other servers are unavailable');
   if (legendFlags.has('down')) legend.push('down: marked unavailable');
   if (legendFlags.has('off')) legend.push('off: kept in the file as a comment (out of rotation)');
   if (legendFlags.has('weight')) legend.push('wN: weight N (default 1)');
   const footnotes = [];
   if (unused.length) footnotes.push(`Upstream groups not used by any endpoint: ${unused.join(', ')}`);
+  if (layout === 'worker') {
+    const noBackend = rows.filter((r) => !r.targets.length).length;
+    if (noBackend) footnotes.push(`${plural(noBackend, 'endpoint')} without a backend server (static files, health checks, redirects, or a missing upstream) ${noBackend === 1 ? 'is' : 'are'} not listed here.`);
+  }
 
   const env = environments.length === 1 ? environments[0] : t(project.project.environment);
+  const counts = layout === 'worker'
+    ? [plural(hosts.length, 'backend host'), plural(view.rows.length, 'worker'), plural(rows.length, 'endpoint'), plural(usedUpstreams.size, 'upstream group')]
+    : [plural(rows.length, 'endpoint'), plural(usedUpstreams.size, 'upstream group'), plural(hosts.length, 'backend host')];
   const table = {
     title: t(project.project.name) || 'Nginx configuration',
     subtitle: [
-      'Endpoint routing table',
+      layout === 'worker' ? 'Backend workers and the endpoints they serve' : 'Endpoint routing table',
       environments.length <= 1 && env ? env : null,
-      `${rows.length} endpoint${rows.length === 1 ? '' : 's'}`,
-      `${usedUpstreams.size} upstream group${usedUpstreams.size === 1 ? '' : 's'}`,
-      `${hosts.length} backend host${hosts.length === 1 ? '' : 's'}`,
+      ...counts,
     ].filter(Boolean).join(' · '),
     layout,
     grouped: !!o.groupRows,
     hosts,
-    groups,
-    rows,
+    groups: view ? view.groups : groups,
+    rows: view ? view.rows : rows,
+    endpointRows: rows,
+    endpointGroups: groups,
     legend,
     footnotes,
     multiEnvironment: environments.length > 1,
@@ -217,6 +234,7 @@ export function buildRoutingTable(project, build, options = {}) {
 
 function addBackend(row, host, port, flags) {
   const text = [port === null || port === undefined ? '' : String(port), ...flags].filter(Boolean).join(' ');
+  row.targets.push({ host, port, flags });
   const prev = row.backends.get(host);
   const entry = { text, flags, active: !flags.includes('off') && !flags.includes('down') };
   if (prev) {
@@ -242,6 +260,90 @@ function statusOf(cfg, row, up, upIndex, issues) {
   return ['Active', 'ok'];
 }
 
+// ---------- Worker layout: one row per backend worker (host + port), grouped by host ----------
+
+const portLabel = (port) => (port === 'socket' ? 'socket' : port === null || port === undefined ? '—' : String(port));
+const FLAG_ORDER = ['off', 'down', 'backup'];
+const flagRank = (f) => (FLAG_ORDER.indexOf(f) === -1 ? FLAG_ORDER.length : FLAG_ORDER.indexOf(f));
+
+/** Numbered ports first (ascending), then sockets and entries without a port. */
+function compareWorkers(a, b) {
+  const na = typeof a.port === 'number';
+  const nb = typeof b.port === 'number';
+  if (na && nb) return a.port - b.port;
+  if (na !== nb) return na ? -1 : 1;
+  return portLabel(a.port).localeCompare(portLabel(b.port));
+}
+
+function workerStatus(w) {
+  if (!w.active) return w.flags.has('down') ? ['Down', 'error'] : ['Commented out', 'muted'];
+  if (w.rows.every((r) => r.statusLevel === 'muted')) return ['Disabled', 'muted'];
+  if (w.rows.some((r) => r.statusLevel === 'error')) return ['Error', 'error'];
+  if (w.onlyBackup) return ['Standby', 'warning'];
+  if (w.rows.some((r) => r.statusLevel === 'warning')) return ['Review', 'warning'];
+  return ['Active', 'ok'];
+}
+
+/**
+ * Turns the endpoint rows inside out: every distinct backend target (host + port) becomes one worker
+ * row listing the endpoints that reach it, and the rows are grouped by host. Endpoints without a
+ * backend (static files, health checks, redirects) have no worker and are counted in a footnote.
+ */
+function workerView(rows) {
+  const byHost = new Map();
+  for (const r of rows) {
+    for (const tg of r.targets) {
+      if (!byHost.has(tg.host)) byHost.set(tg.host, new Map());
+      const slots = byHost.get(tg.host);
+      const key = typeof tg.port === 'number' ? `p${tg.port}` : `s${portLabel(tg.port)}`;
+      let w = slots.get(key);
+      if (!w) {
+        w = { host: tg.host, port: tg.port, flags: new Set(), active: false, onlyBackup: true, rows: [], upstreams: new Set(), methods: new Set(), configs: new Set(), files: new Set(), environments: new Set(), endpoints: new Map() };
+        slots.set(key, w);
+      }
+      for (const f of tg.flags) w.flags.add(f);
+      if (!tg.flags.includes('off') && !tg.flags.includes('down')) w.active = true;
+      if (!tg.flags.includes('backup')) w.onlyBackup = false;
+      if (!w.rows.includes(r)) w.rows.push(r);
+      const upstream = r.upstream || 'direct';
+      w.upstreams.add(upstream);
+      if (r.method) w.methods.add(r.method);
+      if (r.config) w.configs.add(r.config);
+      if (r.file) w.files.add(r.file);
+      if (r.environment) w.environments.add(r.environment);
+      w.endpoints.set(`${upstream}\u0000${r.endpoint}`, { upstream, endpoint: r.endpoint });
+    }
+  }
+
+  const groups = [];
+  const out = [];
+  for (const host of [...byHost.keys()].sort(compareHosts)) {
+    const group = { key: `host:${host}`, path: '', host, title: host, file: '', listen: '', serverNames: '', category: '', rows: [] };
+    [...byHost.get(host).values()].sort(compareWorkers).forEach((w, i) => {
+      const endpoints = [...w.endpoints.values()].sort((a, b) => a.upstream.localeCompare(b.upstream) || a.endpoint.localeCompare(b.endpoint));
+      const [status, statusLevel] = workerStatus(w);
+      const row = {
+        path: w.rows[0] ? w.rows[0].path : '', group: group.key,
+        host, worker: `worker${i + 1}`, port: portLabel(w.port),
+        flags: [...w.flags].sort((a, b) => flagRank(a) - flagRank(b) || a.localeCompare(b)).join(', '),
+        upstreams: [...w.upstreams].sort(), method: [...w.methods].sort().join(', '),
+        endpoints: endpoints.map((e) => e.endpoint), count: String(endpoints.length),
+        configs: [...w.configs], files: [...w.files], environment: [...w.environments].join(', '),
+        backends: new Map(), backendList: [], targets: [], notes: [],
+        status, statusLevel,
+      };
+      group.rows.push(row);
+      out.push(row);
+    });
+    const endpoints = new Set(group.rows.flatMap((r) => r.endpoints));
+    group.disabled = group.rows.every((r) => r.statusLevel === 'muted');
+    group.note = group.disabled ? 'no worker in rotation' : '';
+    group.sub = [plural(group.rows.length, 'worker'), plural(endpoints.size, 'endpoint'), `ports ${group.rows.map((r) => r.port).join(', ')}`].join('  ·  ');
+    groups.push(group);
+  }
+  return { rows: out, groups };
+}
+
 /**
  * Columns for the image and the on-screen table. Columns that would be empty are left out, and the
  * server block details move to the group bands when rows are grouped.
@@ -249,6 +351,7 @@ function statusOf(cfg, row, up, upIndex, issues) {
 function displayColumns(table) {
   const rows = table.rows;
   const any = (key) => rows.some((r) => (Array.isArray(r[key]) ? r[key].length : r[key]));
+  if (table.layout === 'worker') return workerColumns(table, any);
   const cols = [{ key: 'endpoint', label: 'Endpoint', kind: 'mono' }];
   if (!table.grouped) {
     cols.push({ key: 'category', label: 'Category' });
@@ -272,6 +375,27 @@ function displayColumns(table) {
   return cols;
 }
 
+/**
+ * Worker layout columns, left to right: which worker, where it is, how it is used, what it serves,
+ * where the traffic comes from, and its state. The host moves to the group bands when rows are grouped.
+ */
+function workerColumns(table, any) {
+  const configs = new Set(table.rows.flatMap((r) => r.configs));
+  const cols = [];
+  if (!table.grouped) cols.push({ key: 'host', label: 'Backend host', kind: 'mono', limits: [100, 220] });
+  cols.push({ key: 'worker', label: 'Worker', kind: 'mono' });
+  cols.push({ key: 'port', label: 'Port', kind: 'mono' });
+  if (any('flags')) cols.push({ key: 'flags', label: 'Role', kind: 'mono' });
+  if (table.multiEnvironment) cols.push({ key: 'environment', label: 'Environment' });
+  cols.push({ key: 'upstreams', label: 'Upstream group', kind: 'mono', wrap: true });
+  if (any('method')) cols.push({ key: 'method', label: 'Balancing', kind: 'mono' });
+  cols.push({ key: 'count', label: 'Count', kind: 'mono' });
+  cols.push({ key: 'endpoints', label: 'Endpoints served', kind: 'mono', wrap: true, maxLines: 6 });
+  if (configs.size > 1) cols.push({ key: 'configs', label: 'Served from', wrap: true });
+  cols.push({ key: 'status', label: 'Status', kind: 'status' });
+  return cols;
+}
+
 /** Text of a row cell for a display column. */
 export function cellText(row, col) {
   if (col.kind === 'host') return row.backends.get(col.host)?.text || '';
@@ -279,14 +403,31 @@ export function cellText(row, col) {
     case 'upstream': return row.upstream || row.target;
     case 'backends': return row.backendList.join(', ');
     case 'notes': return row.notes.join(', ');
+    case 'upstreams': case 'endpoints': case 'configs': case 'files': return (row[col.key] || []).join(', ');
     default: return row[col.key] ?? '';
   }
 }
 
 // ---------- CSV / TSV ----------
 
-/** Full, stable column set for spreadsheets (one row per endpoint, no grouping). */
+/** Full, stable column set for spreadsheets: one row per endpoint, or per worker in the worker layout. */
 function exportColumns(table) {
+  if (table.layout === 'worker') {
+    return [
+      ['Backend host', (r) => r.host],
+      ['Worker', (r) => r.worker],
+      ['Port', (r) => r.port],
+      ['Role', (r) => r.flags],
+      ['Environment', (r) => r.environment],
+      ['Upstream groups', (r) => r.upstreams.join(', ')],
+      ['Balancing', (r) => r.method || (r.upstreams.some((u) => u !== 'direct') ? 'round robin' : '')],
+      ['Endpoint count', (r) => r.count],
+      ['Endpoints served', (r) => r.endpoints.join(', ')],
+      ['Server configurations', (r) => r.configs.join(', ')],
+      ['conf.d files', (r) => r.files.join(', ')],
+      ['Status', (r) => r.status],
+    ];
+  }
   const cols = [
     ['Endpoint', (r) => r.endpointPath],
     ['Match', (r) => r.match],

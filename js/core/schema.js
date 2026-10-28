@@ -239,7 +239,7 @@ S.settings = obj({
   }),
   // Endpoint routing table (image, CSV, and routing-table.csv in the package).
   table: obj({
-    layout: oneOf(['auto', 'matrix', 'list']),
+    layout: oneOf(['auto', 'matrix', 'list', 'worker']),
     groupRows: bool(true),
     proxyOnly: bool(false),
     includeDisabled: bool(true),

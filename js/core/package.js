@@ -38,10 +38,11 @@ export async function buildPackage(project, build, { now = new Date() } = {}) {
   const entries = configFiles.map((f) => ({ path: f.path, content: f.content, kind: f.kind, file: f }));
 
   const yamlText = s.package.includeProjectFile ? projectToYaml(project) : null;
-  const tableText = s.package.includeTable ? tableToDelimited(buildRoutingTable(project, build), { bom: true }) : null;
+  const table = s.package.includeTable ? buildRoutingTable(project, build) : null;
+  const tableText = table ? tableToDelimited(table, { bom: true }) : null;
   const manifest = await buildManifest(project, build, entries, { now, projectFile, yamlText, tableText });
   const manifestText = `# Package manifest written by ${APP_NAME}. Lists every file with its size and SHA-256.\n${yaml.dump(manifest, { noRefs: true, lineWidth: 120 })}`;
-  const readme = buildReadme(project, build, entries, { now, projectFile: yamlText ? projectFile : null, tableFile: tableText ? TABLE_FILE : null });
+  const readme = buildReadme(project, build, entries, { now, projectFile: yamlText ? projectFile : null, tableFile: tableText ? TABLE_FILE : null, tableLayout: table ? table.layout : '' });
 
   entries.push({ path: 'manifest.yml', content: manifestText, kind: 'manifest' });
   entries.push({ path: 'README.md', content: readme, kind: 'readme' });
@@ -126,7 +127,7 @@ function summaryOf(project, f) {
 const code = (s) => `\`${s}\``;
 const fence = (lines) => ['```bash', ...lines, '```'].join('\n');
 
-function buildReadme(project, build, entries, { now, projectFile, tableFile }) {
+function buildReadme(project, build, entries, { now, projectFile, tableFile, tableLayout }) {
   const s = project.settings;
   const root = t(s.nginxRoot) || '/etc/nginx';
   const pkgRoot = t(s.package.rootFolder);
@@ -162,7 +163,10 @@ function buildReadme(project, build, entries, { now, projectFile, tableFile }) {
   p('| `manifest.yml` | file list with sizes and SHA-256 checksums | – |');
   p('| `README.md` | these instructions | – |');
   if (projectFile) p(`| ${code(projectFile)} | project file; import it in ${APP_NAME} to edit this configuration | – |`);
-  if (tableFile) p(`| ${code(tableFile)} | every endpoint with its upstream, backend hosts and ports, file and status (opens in Excel) | – |`);
+  const tableDesc = tableLayout === 'worker'
+    ? 'every backend worker (host and port) with the endpoints it serves, its upstream groups and status'
+    : 'every endpoint with its upstream, backend hosts and ports, file and status';
+  if (tableFile) p(`| ${code(tableFile)} | ${tableDesc} (opens in Excel) | – |`);
   p();
 
   p('## Before you install');

@@ -71,6 +71,48 @@ test('ungrouped tables carry the server block details as columns', () => {
   assert.ok(!labels.includes('Server names'), 'all names are "_", so the column is left out');
 });
 
+test('worker layout: one row per backend worker (host + port) with the endpoints it serves', () => {
+  const p = pairsProject();
+  p.servers[0].blocks[0].locations.push(location(proxy('/invoices/', 'ext_billing')));
+  const table = tableOf(p, { layout: 'worker' });
+  const w = (host, worker) => table.rows.find((r) => r.host === host && r.worker === worker);
+
+  assert.equal(table.layout, 'worker');
+  assert.deepEqual(table.groups.map((g) => g.title), ['10.0.0.11', '10.0.0.12', '10.0.0.13', '10.0.0.14']);
+  assert.equal(table.groups[0].sub, '2 workers  ·  3 endpoints  ·  ports 9000, 9005');
+  assert.equal(table.rows.length, 6);
+  assert.equal(table.endpointRows.length, 5);
+
+  // Workers are numbered per host in ascending port order, and one worker can serve several endpoints.
+  assert.deepEqual([w('10.0.0.11', 'worker1').port, w('10.0.0.11', 'worker2').port], ['9000', '9005']);
+  assert.deepEqual(w('10.0.0.11', 'worker1').endpoints, ['/billing/', '/invoices/']);
+  assert.equal(w('10.0.0.11', 'worker1').count, '2');
+  assert.deepEqual(w('10.0.0.11', 'worker1').upstreams, ['ext_billing']);
+  assert.equal(w('10.0.0.11', 'worker2').flags, 'w2');
+  assert.equal(w('10.0.0.12', 'worker2').status, 'Standby');
+  assert.equal(w('10.0.0.13', 'worker1').status, 'Commented out');
+  assert.equal(w('10.0.0.13', 'worker1').statusLevel, 'muted');
+  assert.equal(w('10.0.0.14', 'worker1').method, 'ip_hash');
+  assert.ok(table.legend.some((l) => l.startsWith('One row per backend worker')));
+  assert.ok(table.footnotes.some((f) => f.startsWith('1 endpoint without a backend server')), 'the health check has no worker');
+
+  const labels = table.columns.map((c) => c.label);
+  assert.deepEqual(labels, ['Worker', 'Port', 'Role', 'Upstream group', 'Balancing', 'Count', 'Endpoints served', 'Served from', 'Status']);
+  assert.equal(cellText(w('10.0.0.11', 'worker1'), table.columns.find((c) => c.key === 'endpoints')), '/billing/, /invoices/');
+  assert.equal(tableOf(p, { layout: 'worker', groupRows: false }).columns[0].label, 'Backend host', 'the host is a column when rows are not grouped');
+});
+
+test('worker layout CSV: one row per worker', () => {
+  const p = pairsProject();
+  p.servers[0].blocks[0].locations.push(location(proxy('/invoices/', 'ext_billing')));
+  const table = tableOf(p, { layout: 'worker' });
+  const csv = tableToDelimited(table);
+  const lines = csv.trimEnd().split('\r\n');
+  assert.equal(lines[0], 'Backend host,Worker,Port,Role,Environment,Upstream groups,Balancing,Endpoint count,Endpoints served,Server configurations,conf.d files,Status');
+  assert.equal(lines.length, table.rows.length + 1);
+  assert.equal(lines[1], '10.0.0.11,worker1,9000,,,ext_billing,round robin,2,"/billing/, /invoices/",External,conf.d/external.conf,Active');
+});
+
 test('status reflects validation and the state of the configuration', () => {
   const p = pairsProject();
   p.upstreams[1].enabled = false; // ext_visitor turned off

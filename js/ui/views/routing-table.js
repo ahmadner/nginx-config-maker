@@ -20,6 +20,7 @@ export function tableElement(table) {
   }))];
   if (twoRows) head.push(h('tr', {}, hostCols.map((c) => h('th', { scope: 'col', class: 'rt-host-head mono', text: c.label }))));
 
+  const strong = (c) => c.key === 'endpoint' || c.key === 'worker';
   const rowEl = (r, i) => h('tr', { class: [i % 2 && 'rt-zebra', r.statusLevel === 'muted' && 'rt-muted'] }, cols.map((c) => {
     if (c.key === 'status') return h('td', {}, h('span', { class: ['rt-pill', `rt-${r.statusLevel}`], text: r.status }));
     if (c.kind === 'host') {
@@ -30,15 +31,15 @@ export function tableElement(table) {
       }) : null);
     }
     const text = cellText(r, c);
-    return h('td', { class: [c.kind === 'mono' && 'mono', c.key === 'endpoint' && 'rt-endpoint', (c.key === 'notes' || (c.key === 'upstream' && !r.upstream)) && 'rt-soft'], text });
+    return h('td', { class: [c.kind === 'mono' && 'mono', strong(c) && 'rt-endpoint', (c.key === 'notes' || (c.key === 'upstream' && !r.upstream)) && 'rt-soft'], text });
   }));
 
   const body = [];
   if (table.grouped) {
     for (const g of table.groups) {
       body.push(h('tr', { class: 'rt-group' }, h('td', { colspan: cols.length },
-        h('strong', { text: g.title + (g.disabled ? ' (turned off)' : '') }),
-        h('span', { class: 'rt-group-sub mono', text: [g.file, `listen ${g.listen}`, g.serverNames && g.serverNames !== '_' ? g.serverNames : 'any host name', g.category].filter(Boolean).join('  ·  ') }))));
+        h('strong', { text: g.title + (g.note ? ` (${g.note})` : '') }),
+        h('span', { class: 'rt-group-sub mono', text: g.sub }))));
       g.rows.forEach((r, i) => body.push(rowEl(r, i)));
     }
   } else {
@@ -56,6 +57,7 @@ export function routingTableCard(app) {
   const legend = h('ul', { class: 'rt-legend' });
 
   const current = () => buildRoutingTable(app.project, app.build);
+  const byWorker = app.project.settings.table.layout === 'worker';
 
   const downloadPng = async () => {
     try {
@@ -86,14 +88,15 @@ export function routingTableCard(app) {
 
   const el = h('section', { class: 'card', id: 'routing-table' },
     h('h2', { class: 'card-title', text: 'Endpoint routing table (image and CSV)' }),
-    h('p', { text: 'Every endpoint with its upstream group, the port on each backend host, its server configuration file and its status. Use the image for handover documents and tickets, and the CSV for spreadsheets.' }),
+    h('p', { text: 'Every endpoint with its upstream group, the port on each backend host, its server configuration file and its status. The worker layout turns it around: one row per backend worker (a host and port) with the endpoints it serves. Use the image for handover documents and tickets, and the CSV for spreadsheets.' }),
     grid(
       selectField(app, ['settings', 'table', 'layout'], [
         ['auto', `Automatic (columns per host up to ${MATRIX_MAX_HOSTS} hosts)`],
         ['matrix', 'One column per backend host'],
         ['list', 'Backend servers in one column'],
-      ], { label: 'Backend servers', width: 'l' }),
-      checkField(app, ['settings', 'table', 'groupRows'], { label: 'Group rows by server block (image and preview)', width: 'm', rerender: true }),
+        ['worker', 'Group by backend worker (one row per host and port)'],
+      ], { label: 'Layout', width: 'l' }),
+      checkField(app, ['settings', 'table', 'groupRows'], { label: byWorker ? 'Group rows by backend host (image and preview)' : 'Group rows by server block (image and preview)', width: 'm', rerender: true }),
     ),
     grid(
       checkField(app, ['settings', 'table', 'proxyOnly'], { label: 'Proxy endpoints only', width: 's', rerender: true }),
@@ -112,8 +115,12 @@ export function routingTableCard(app) {
   function refresh() {
     if (!el.isConnected || !app.build) return;
     const table = current();
-    summary.textContent = `${table.subtitle}. ${table.layout === 'matrix' ? 'Backend columns: one per host.' : 'Backend servers listed per endpoint.'} The CSV always has one row per endpoint with every column.`;
-    replace(preview, table.rows.length ? tableElement(table) : h('p', { class: 'empty-small', text: 'No endpoints yet. Add locations to a server block.' }));
+    const how = table.layout === 'worker' ? 'One row per backend worker, grouped by host, with the endpoints it serves.'
+      : table.layout === 'matrix' ? 'Backend columns: one per host.'
+        : 'Backend servers listed per endpoint.';
+    const csv = table.layout === 'worker' ? 'The CSV has one row per worker with every column.' : 'The CSV always has one row per endpoint with every column.';
+    summary.textContent = `${table.subtitle}. ${how} ${csv}`;
+    replace(preview, table.rows.length ? tableElement(table) : h('p', { class: 'empty-small', text: table.layout === 'worker' ? 'No backend servers yet. Add upstream groups and proxy endpoints.' : 'No endpoints yet. Add locations to a server block.' }));
     replace(legend, [...table.legend, ...table.footnotes].map((l) => h('li', { text: l })));
   }
 

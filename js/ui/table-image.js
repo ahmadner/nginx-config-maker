@@ -40,10 +40,13 @@ const LIMITS = {
   endpoint: [90, 320], upstream: [120, 320], method: [80, 200], backends: [180, 420], backendPath: [80, 220],
   notes: [120, 320], status: [86, 140], category: [70, 140], environment: [80, 160], listen: [70, 180],
   serverNames: [90, 240], file: [110, 260], host: [76, 150],
+  // Worker layout.
+  worker: [76, 120], port: [56, 110], flags: [64, 160], upstreams: [110, 260], count: [58, 90],
+  endpoints: [220, 520], configs: [110, 240],
 };
 
 function fontFor(col, row) {
-  if (col.key === 'endpoint') return F.monoBold;
+  if (col.key === 'endpoint' || col.key === 'worker') return F.monoBold;
   if (col.key === 'upstream' && row && !row.upstream) return F.italic;
   return col.kind === 'mono' || col.kind === 'host' ? F.mono : F.cell;
 }
@@ -103,7 +106,7 @@ function roundRect(ctx, x, y, w, h, r) {
 /** Lays out the table; returns sizes and per-row wrapped cell text. */
 function layout(ctx, table) {
   const cols = table.columns.map((col) => {
-    const [min, max] = LIMITS[col.kind === 'host' ? 'host' : col.key] || [70, 240];
+    const [min, max] = col.limits || LIMITS[col.kind === 'host' ? 'host' : col.key] || [70, 240];
     let w = textWidth(ctx, F.head, col.label) + PAD * 2;
     for (const r of table.rows) {
       const text = col.key === 'status' ? r.status : cellText(r, col);
@@ -116,7 +119,7 @@ function layout(ctx, table) {
     const cells = cols.map((col) => {
       const text = col.key === 'status' ? r.status : cellText(r, col);
       const font = fontFor(col, r);
-      const lines = col.wrap ? wrapText(ctx, font, text, col.width - PAD * 2) : [ellipsize(ctx, font, text, col.width - PAD * 2)];
+      const lines = col.wrap ? wrapText(ctx, font, text, col.width - PAD * 2, col.maxLines || MAX_LINES) : [ellipsize(ctx, font, text, col.width - PAD * 2)];
       return { text, lines, font };
     });
     const lineCount = Math.max(1, ...cells.map((c) => c.lines.length));
@@ -221,13 +224,12 @@ export async function tableToPng(table, { scale = 2, date = new Date() } = {}) {
       ctx.fillRect(x0, y, 4, GROUP_H);
       ctx.fillStyle = g.disabled ? C.muted : C.text;
       ctx.font = F.group;
-      const title = g.title + (g.disabled ? ' (turned off)' : '');
+      const title = g.title + (g.note ? ` (${g.note})` : '');
       ctx.fillText(ellipsize(ctx, F.group, title, L.tableWidth * 0.5), x0 + 14, y + GROUP_H / 2);
       const tw = Math.min(textWidth(ctx, F.group, title), L.tableWidth * 0.5);
-      const sub = [g.file, `listen ${g.listen}`, g.serverNames && g.serverNames !== '_' ? g.serverNames : 'any host name', g.category].filter(Boolean).join('  ·  ');
       ctx.fillStyle = C.muted;
       ctx.font = F.groupSub;
-      ctx.fillText(ellipsize(ctx, F.groupSub, sub, L.tableWidth - tw - 40), x0 + 14 + tw + 16, y + GROUP_H / 2 + 1);
+      ctx.fillText(ellipsize(ctx, F.groupSub, g.sub, L.tableWidth - tw - 40), x0 + 14 + tw + 16, y + GROUP_H / 2 + 1);
       y += GROUP_H;
     }
     g.rows.forEach((r, i) => {

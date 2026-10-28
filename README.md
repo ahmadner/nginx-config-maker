@@ -119,7 +119,7 @@ Features that need something outside the package are marked in the UI and listed
 
 ## Endpoint routing table (image and CSV)
 
-*Import / Export → Endpoint routing table* turns the project into one table of every endpoint. It shows the upstream group, the port on each backend host, the configuration file and the status. It is meant for handover documents, change tickets and spreadsheets. The preview on screen shows exactly what the image contains.
+*Import / Export → Endpoint routing table* turns the project into one table of every endpoint. It shows the upstream group, the port on each backend host, the configuration file and the status. It is meant for handover documents, change tickets and spreadsheets. The preview on screen shows exactly what the image contains. A second layout turns the table around and lists the endpoints per backend worker — see *Group by backend worker* below.
 
 ```text
  Endpoint             Upstream / handled by   Balancing  │ 192.0.2.11  192.0.2.12  192.0.2.13  192.0.2.14 │ Notes      Status
@@ -134,12 +134,37 @@ Features that need something outside the package are marked in the UI and listed
 
 How it is laid out:
 
-- **One column per backend host**, with the port in each cell, so you can see at a glance which nodes serve which application. Markers show `backup`, `down`, `off` (kept in the file as a comment, out of rotation) and weights (`w2`). A legend under the table explains only the markers that appear. Above 8 hosts, *Automatic* switches to one *Backend servers* column (`host:port, …`) so the table stays readable. Either layout can also be chosen explicitly.
+- **One column per backend host**, with the port in each cell, so you can see at a glance which nodes serve which application. Markers show `backup`, `down`, `off` (kept in the file as a comment, out of rotation) and weights (`w2`). A legend under the table explains only the markers that appear. Above 8 hosts, *Automatic* switches to one *Backend servers* column (`host:port, …`) so the table stays readable. Either layout can also be chosen explicitly, as can *Group by backend worker* below.
 - **Rows are grouped by server block.** A band shows the file, the listen port, the server names and the category, so those values are not repeated on every row. Turn grouping off to get them as columns instead.
 - **Columns that would be empty are left out.** These are *Balancing* (round robin is the default), *Backend path* and *Notes*.
 - **Notes** list per-endpoint overrides: timeouts, body size, WebSocket, allowed methods, IP allowlists, passwords, rate limits, internal-only and HTTPS backends.
 - **Status** comes from validation: *Active*, *Review* (warnings), *Error*, *Missing upstream*, *Upstream off*, *No backend* or *Disabled*. Upstream groups that no endpoint uses are listed under the table.
 - Redirects, static files, health checks and the status page appear with what handles them. Choose *Proxy endpoints only* to leave them out.
+
+### Group by backend worker
+
+The *Group by backend worker* layout answers the other question: **what does one backend node run, and which applications does it serve?** Every distinct backend target (a host and a port) becomes one row — one worker — and the rows are grouped by host:
+
+```text
+ Worker   Port  Role    Upstream group            Count      Endpoints served        Served from  Status
+ 192.0.2.11  2 workers · 3 endpoints · ports 9000, 9005
+ worker1  9000  off     ext_billing, ext_catalog  2          /billing/, /catalog/    External     Active
+ worker2  9005          int_billingJob            1          /billingJob/            Internal     Active
+ 192.0.2.12  2 workers · 3 endpoints · ports 9000, 9005
+ worker1  9000          ext_billing, ext_catalog  2          /billing/, /catalog/    External     Active
+ worker2  9005  backup  int_billingJob            1          /billingJob/            Internal     Standby
+ 192.0.2.13  1 worker · 1 endpoint · ports 9000
+ worker1  9000          ext_billingKycShop        1          /billingKycShop/        External     Active
+ 192.0.2.14  1 worker · 1 endpoint · ports 9000
+ worker1  9000          ext_billingKycShop        1          /billingKycShop/        External     Active
+```
+
+- **Workers are numbered per host in ascending port order**, so `worker2 on 192.0.2.12` is the second port on that node. The *Port* column always shows the real port, so the numbering is never the only thing you go by.
+- **Endpoints served** lists every endpoint that reaches that worker, ordered by upstream group and then by path, with the count next to it. A worker that serves several applications shows them all on one row.
+- **Hosts are ordered numerically** (IPv4 first, then IPv6, host names and unix sockets), and each band gives the number of workers, the number of endpoints and the ports in use. Turn grouping off to get the host as a column instead.
+- **Role** shows `backup`, `down`, `off` and weights for that target, and **Status** becomes the state of the worker: *Active*, *Standby* (only used as a backup), *Commented out*, *Down*, *Review*, *Error* or *Disabled*.
+- **Upstream group** names the groups the worker belongs to (`direct` for a `proxy_pass` straight to an address), and *Served from* the server configurations whose traffic reaches it.
+- Endpoints without a backend server (static files, health checks, redirects) have no worker; they are counted in a footnote under the table.
 
 Exports:
 
@@ -147,7 +172,7 @@ Exports:
 |--------|--------|
 | Download PNG | `<project>-routing-table.png`, drawn at 2× for sharp text, light document colours whatever the app theme |
 | Copy image | the same PNG on the clipboard, ready to paste into a document, ticket or e-mail |
-| Download CSV | `<project>-routing-table.csv`: one row per endpoint with every column (match type, environment, server configuration, listen, server names, upstream file, …), UTF-8 with BOM so Excel shows it correctly |
+| Download CSV | `<project>-routing-table.csv`: one row per endpoint with every column (match type, environment, server configuration, listen, server names, upstream file, …), UTF-8 with BOM so Excel shows it correctly. In the worker layout: one row per worker (host, worker, port, role, upstream groups, endpoint count, endpoints served, …) |
 | Copy for Excel | the same rows as tab-separated text, to paste into a spreadsheet |
 
 The CSV is also added to the ZIP package as `routing-table.csv` (*Add routing-table.csv to the ZIP package*). Cells that start with `=`, `+`, `-` or `@` are prefixed with `'`, so spreadsheets never run them as formulas.
@@ -207,7 +232,7 @@ settings:
   securityHeaders: { path: security_headers.conf, hideUpstreamHeaders: true, frameOptions: SAMEORIGIN, contentTypeOptions: true, hsts: true, hstsMaxAge: 31536000 }
   format:  { indent: 4, alignValues: true, headerComments: true }
   package: { rootFolder: nginx-config, includeDisabled: true, includeProjectFile: true, includeTable: true }
-  table:   { layout: auto, groupRows: true, proxyOnly: false, includeDisabled: true }   # routing table: auto | matrix | list
+  table:   { layout: auto, groupRows: true, proxyOnly: false, includeDisabled: true }   # routing table: auto | matrix | list | worker
 rateLimitZones:
   - { name: api, key: $binary_remote_addr, size: 10m, rate: 10r/s }
 upstreams:
@@ -285,7 +310,7 @@ npm run fixtures       # regenerate tests/fixtures/sample after an intended outp
 npm run vendor:check   # verify the vendored libraries against vendor/checksums.json
 ```
 
-The tests cover generation (upstreams, every load-balancing method, servers, TLS, HTTP/2 syntaxes, redirects, locations of every type, proxy settings and header inheritance, custom directives, multiple blocks, nested paths, disabled files), validation (every error class above), YAML round-trips and malformed or hostile input, ZIP structure and manifest checksums, the routing table (layouts, markers, status, CSV quoting and formula protection), project storage, golden files for the sample project, and static-hosting compatibility (relative imports, CSP, no network or dynamic code, subpath serving).
+The tests cover generation (upstreams, every load-balancing method, servers, TLS, HTTP/2 syntaxes, redirects, locations of every type, proxy settings and header inheritance, custom directives, multiple blocks, nested paths, disabled files), validation (every error class above), YAML round-trips and malformed or hostile input, ZIP structure and manifest checksums, the routing table (layouts including the worker grouping, markers, status, CSV quoting and formula protection), project storage, golden files for the sample project, and static-hosting compatibility (relative imports, CSP, no network or dynamic code, subpath serving).
 
 Project structure:
 
