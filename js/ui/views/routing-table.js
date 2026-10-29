@@ -33,10 +33,14 @@ export function tableElement(table) {
     }
     if (c.kind === 'host') {
       const e = r.backends.get(c.host);
-      return h('td', { class: 'rt-host' }, e ? h('span', {
-        class: ['mono', e.flags.includes('off') && 'rt-off', e.flags.includes('down') && 'rt-down', e.flags.includes('backup') && 'rt-backup', e.active && 'rt-active'],
-        text: e.text,
-      }) : null);
+      // One span per server: a server marked "down" goes red on its own, the live ones beside it stay blue.
+      return h('td', { class: 'rt-host' }, e ? (e.parts || [e]).map((p, n) => [
+        n ? h('span', { class: 'rt-sep', text: ', ' }) : null,
+        h('span', {
+          class: ['mono', p.flags.includes('off') && 'rt-off', p.flags.includes('down') && 'rt-down', p.flags.includes('backup') && 'rt-backup', p.active && 'rt-active'],
+          text: p.text,
+        }),
+      ]) : null);
     }
     const text = cellText(r, c);
     return h('td', { class: [c.kind === 'mono' && 'mono', strong(c) && 'rt-endpoint', (c.key === 'notes' || (c.key === 'upstream' && !r.upstream)) && 'rt-soft'], text });

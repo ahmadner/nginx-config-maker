@@ -262,13 +262,15 @@ function addBackend(row, host, port, flags) {
   const text = [port === null || port === undefined ? '' : String(port), ...flags].filter(Boolean).join(' ');
   row.targets.push({ host, port, flags });
   const prev = row.backends.get(host);
-  const entry = { text, flags, active: !flags.includes('off') && !flags.includes('down') };
+  // One part per server line, so a host that serves 9005 down and 8444 can colour each of them on its own.
+  const part = { text, flags, active: !flags.includes('off') && !flags.includes('down') };
   if (prev) {
     prev.text = `${prev.text}, ${text}`;
     prev.flags = [...prev.flags, ...flags];
-    prev.active = prev.active || entry.active;
+    prev.active = prev.active || part.active;
+    prev.parts.push(part);
   } else {
-    row.backends.set(host, entry);
+    row.backends.set(host, { ...part, parts: [part] });
   }
   const hostText = host.startsWith('unix:') ? host : isIPv6(host) ? `[${host}]` : host;
   row.backendList.push(`${hostText}${port === 'socket' || port === null || port === undefined ? '' : `:${port}`}${flags.length ? ` (${flags.join(', ')})` : ''}`);

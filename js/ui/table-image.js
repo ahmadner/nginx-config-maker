@@ -43,7 +43,7 @@ const COLOR_GAP = 20;
 const LIMITS = {
   endpoint: [90, 320], upstream: [120, 320], method: [80, 200], backends: [180, 420], backendPath: [80, 220],
   notes: [120, 320], status: [86, 140], category: [70, 140], environment: [80, 160], listen: [70, 180],
-  serverNames: [90, 240], file: [110, 260], host: [76, 150],
+  serverNames: [90, 240], file: [110, 260], host: [76, 186],
   // Worker layout.
   worker: [76, 120], port: [56, 110], flags: [64, 160], upstreams: [110, 260], count: [58, 90],
   endpoints: [220, 520], configs: [110, 240],
@@ -120,6 +120,61 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+/**
+ * A host cell drawn one server at a time: a server marked "down" reads red while the others on the same
+ * host keep the blue of a live port, instead of the whole cell taking the colour of its worst server.
+ */
+function hostSegments(ctx, entry, muted = false) {
+  const segs = [];
+  for (const p of entry.parts || [entry]) {
+    if (segs.length) segs.push({ text: ', ', font: F.mono, color: muted ? C.faint : C.muted, sep: true });
+    const off = p.flags.includes('off');
+    segs.push({
+      text: p.text,
+      font: p.active && !muted ? F.monoBold : F.mono,
+      color: muted || off ? C.faint : p.flags.includes('down') ? C.down : p.flags.includes('backup') ? C.backup : C.port,
+      off,
+    });
+  }
+  for (const s of segs) s.width = textWidth(ctx, s.font, s.text);
+  return segs;
+}
+
+function hostWidth(ctx, entry) {
+  return hostSegments(ctx, entry).reduce((n, s) => n + s.width, 0);
+}
+
+function drawHostCell(ctx, entry, cx, y, colWidth, rowH, muted) {
+  const max = colWidth - PAD * 2;
+  const segs = hostSegments(ctx, entry, muted);
+  let drawn = segs;
+  let total = segs.reduce((n, s) => n + s.width, 0);
+  if (total > max) {
+    // Too narrow for every server: keep whole ones, then cut the first one that no longer fits.
+    drawn = [];
+    let used = 0;
+    for (const s of segs) {
+      const left = max - used;
+      if (left <= 0) break;
+      if (s.width <= left) { drawn.push(s); used += s.width; continue; }
+      const cut = { ...s, text: ellipsize(ctx, s.font, s.text, left), off: false };
+      cut.width = textWidth(ctx, cut.font, cut.text);
+      drawn.push(cut);
+      break;
+    }
+    total = drawn.reduce((n, s) => n + s.width, 0);
+  }
+  let tx = cx + colWidth / 2 - total / 2;
+  const mid = y + rowH / 2;
+  for (const s of drawn) {
+    ctx.font = s.font;
+    ctx.fillStyle = s.color;
+    ctx.fillText(s.text, tx, mid);
+    if (s.off) ctx.fillRect(tx, mid, s.width, 1);
+    tx += s.width;
+  }
+}
+
 /** Entries of a stacked cell (one per endpoint), capped so a worker with many endpoints stays readable. */
 function stacked(row, col) {
   const entries = cellLines(row, col);
@@ -139,6 +194,12 @@ function layout(ctx, table) {
       if (entries) {
         const font = col.kind === 'statuses' ? F.pill : fontFor(col, r);
         for (const e of entries) w = Math.max(w, textWidth(ctx, font, e.text) + (col.kind === 'statuses' ? 18 : 0) + PAD * 2);
+        continue;
+      }
+      if (col.kind === 'host') {
+        // Measured per server, since a live port is drawn in the wider bold mono.
+        const entry = r.backends.get(col.host);
+        if (entry) w = Math.max(w, hostWidth(ctx, entry) + PAD * 2);
         continue;
       }
       const text = col.key === 'status' ? r.status : cellText(r, col);
@@ -299,20 +360,7 @@ export async function tableToPng(table, { scale = 2, date = new Date() } = {}) {
           ctx.fillText(ellipsize(ctx, F.pill, r.status, pw - 12), cx + PAD + 8, y + R.height / 2 + 0.5);
         } else if (col.kind === 'host') {
           const entry = r.backends.get(col.host);
-          if (entry) {
-            const off = entry.flags.includes('off');
-            const color = muted || off ? C.faint : entry.flags.includes('down') ? C.down : entry.flags.includes('backup') ? C.backup : C.port;
-            ctx.fillStyle = color;
-            ctx.font = entry.active && !muted ? F.monoBold : F.mono;
-            ctx.textAlign = 'center';
-            const text = cell.lines[0];
-            ctx.fillText(text, cx + col.width / 2, y + R.height / 2);
-            if (off) {
-              const w = textWidth(ctx, ctx.font, text);
-              ctx.fillRect(cx + col.width / 2 - w / 2, y + R.height / 2, w, 1);
-            }
-            ctx.textAlign = 'left';
-          }
+          if (entry) drawHostCell(ctx, entry, cx, y, col.width, R.height, muted);
         } else if (cell.entries && col.kind === 'statuses') {
           // One pill per endpoint, on the same lines as the endpoints next to it.
           const top = y + R.height / 2 - ((cell.lines.length - 1) * L.lineH) / 2;

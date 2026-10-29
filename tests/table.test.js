@@ -51,6 +51,24 @@ test('matrix layout: one column per backend host with the port in each cell', ()
   assert.deepEqual(table.groups.map((g) => [g.file, g.listen, g.category]), [['conf.d/external.conf', '8444', 'External'], ['conf.d/internal.conf', '8443', 'Internal']]);
 });
 
+test('a host with a down server and a live one keeps each server its own colour', () => {
+  const p = baseProject('Mixed');
+  p.upstreams = [upstream({
+    name: 'ext_uPayCR',
+    servers: [
+      { address: '10.1.166.131', port: 9005, down: true },
+      { address: '10.1.166.132', port: 9005, down: true },
+      { address: '10.1.166.131', port: 8444 },
+    ],
+  })];
+  p.servers = [server({ name: 'External', fileName: 'external.conf', blocks: [{ listen: [{ port: 8444 }], serverNames: ['_'], locations: [proxy('/uPayCR/', 'ext_uPayCR')] }] })];
+  const r = row(tableOf(p), '/uPayCR/');
+  const mixed = r.backends.get('10.1.166.131');
+  assert.equal(mixed.text, '9005 down, 8444');
+  assert.deepEqual(mixed.parts.map((x) => [x.text, x.active]), [['9005 down', false], ['8444', true]]);
+  assert.deepEqual(r.backends.get('10.1.166.132').parts.map((x) => x.text), ['9005 down']);
+});
+
 test('layout switches to a backend list for many hosts, and can be forced either way', () => {
   const sample = sampleProject();
   const auto = tableOf(sample);
